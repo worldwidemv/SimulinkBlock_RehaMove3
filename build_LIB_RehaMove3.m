@@ -41,10 +41,12 @@ end
 
 %% auto generate the Simulink S-functions via LCT
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
- result = xsrt_buildLibScriptEndLCT(startDir, libDir, libName, sfuncFolderName, srtAddPath, defs);
- 
+result = xsrt_buildLibScriptEndLCT(startDir, libDir, libName, sfuncFolderName, srtAddPath, defs);
+% copy the Simulink lib
+copyfile(['.', filesep, '*.slx'], ['.', filesep, sfuncFolderName]);
+
 %% restore the warning settings
 warning(warn_state);
 
 %% remove function to check if the library is availabe from the path
-rmpath(fullfile(pwd, 'scripts', 'getRehaMoveLib')); 
+rmpath(fullfile(pwd, 'scripts', 'getRehaMoveLib'));
