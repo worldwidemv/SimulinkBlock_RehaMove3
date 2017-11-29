@@ -1,6 +1,15 @@
 function available = copySmptLib( sourceDir, targetDir, targetType )
 %COPYSMPTLIB Asks for the path to the SMPT Lib and copies the needed files.
-%   Detailed explanation goes here
+
+%   TU Berlin --- Fachgebiet Regelungssystem
+%   Author: Markus Valtin
+%   Copyright © 2017 Markus Valtin. All rights reserved.
+%
+%   This program is free software: you can redistribute it and/or modify it under the terms of the 
+%   GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
+%
+%   This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+%   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 %% show an information dialoge
 uiwait(msgbox( ['The Hasomed SMPT library for ', targetType, ', needed for the RehaMove3 block, was not found yet!', char(10), char(10), ...
