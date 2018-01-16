@@ -48,14 +48,10 @@ void lctRM3_Deinitialise(void **work1);
 // External declaration for class instance global storage
 class block_RehaMove3 {
 public:
-	union convert64_t {
-		double input;
-		uint64_t output;
-	};
 	//public variables
 	RehaMove3 *Device;
 
-	struct rmpStatus_t {
+	struct rmStatus_t {
 		bool deviceIsInitialised;
 		//
 		bool deviceOpeningFailed;
@@ -64,10 +60,10 @@ public:
 		double	stimStatus1;
 		uint32_t outputCounter;
 		uint32_t outputCounterNext;
-	} rmpStatus;
+	} rmStatus;
 
 	// stimOptions = [size(stimDeviceID,2), uint8(stimDeviceID), size(stimDevicePath,2), uint8(stimDevicePath),
-	// size(stimChannels,2), uint8(stimChannels), stimFrequency, stimRMPProtocol, stimMaxCurrent, stimMaxPulsWidth];
+	// size(stimChannels,2), uint8(stimChannels), stimFrequency, stimRMrotocol, stimMaxCurrent, stimMaxPulsWidth];
 	struct stimOptions_t{
 		char    blockID[RM3_STRING_SIZE_MAX];
 		char    deviceID[RM3_STRING_SIZE_MAX];
@@ -75,7 +71,7 @@ public:
 		uint8_t numberOfActiveChannels;
 		uint8_t channelsActive[RM3_N_PULSES_MAX];
 		uint8_t stimFrequency;
-		uint8_t rmpProtocol;
+		uint8_t rmProtocol;
 		float	maxCurrent;
 		uint16_t maxPulseWidth;
 		uint16_t errorAbortAfter;
@@ -95,12 +91,12 @@ public:
 
 
 	} mlOptions;
-	// miscOptions= [uint8(miscPrintBlockParam), miscPrintDeviceInfos, miscPrintInitInfos, miscPrintRMPInitSettings,
+	// miscOptions= [uint8(miscPrintBlockParam), miscPrintDeviceInfos, miscPrintInitInfos, miscPrintRMInitSettings,
 	// miscPrintSendInfos, miscPrintReceiveInfos, miscPrintStimInfos, miscPrintSequenceErrors,
 	// miscPrintCorrectionChargeWarnings, miscPrintStats, miscUseColors,   miscEnableAdvancedSettings, miscDisableVersionCheck];
 	struct miscOptions_t{
 		bool debugPrintBlockParameter;
-		RehaMove3::rmpDebugSettings_t debug;
+		RehaMove3::rmDebugSettings_t debug;
 		bool enableAdvancedSettings;
 		bool disableVersionCheck;
 	} miscOptions;
@@ -110,8 +106,8 @@ public:
 	} ioSize;
 	double sampleTime;
 
-	actionResult_t		rmpResult;
-	RehaMove3::rmpInitSettings_t rmpInitSettings;
+	actionResult_t		rmResult;
+	RehaMove3::rmInitSettings_t rmInitSettings;
 	SequenceConfig_t	SequenceConfig;
 
 	//public functions

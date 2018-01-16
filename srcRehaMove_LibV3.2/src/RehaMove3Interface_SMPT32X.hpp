@@ -46,8 +46,10 @@
 extern "C" {
 // General
 #include "smpt_client.h"
-// Low_lev
+// Low Level
 #include "smpt_ll_client.h"
+// Mid Level
+#include "smpt_ml_client.h"
 }
 
 extern "C" {
@@ -60,14 +62,14 @@ extern "C" {
  *
  * Make sure every supported version has a value for {major, minor, revision}
  */
-static const uint8_t RMP_NumberOfSupportedVersionsMax 	= 3;
-static const uint8_t RMP_NumberOfSupportedVersionsMain 	= 1;
-static const uint8_t RMP_SupportedVersionsMain[][3] 	= {{2,1,16}};
-static const uint8_t RMP_NumberOfSupportedVersionsStim 	= 1;
-static const uint8_t RMP_SupportedVersionsStim[][3] 	= {{2,1,0}};
-static const uint8_t RMP_NumberOfSupportedVersionsSMPT 	= 1;
-static const uint8_t RMP_SupportedVersionsSMPT[][3] 	= {{3,2,4}};
-static const uint8_t RMP_ErrorWarningBand				= 3; // warning if difference of minor version number is smaller
+static const uint8_t RM3_NumberOfSupportedVersionsMax 	= 3;
+static const uint8_t RM3_NumberOfSupportedVersionsMain 	= 1;
+static const uint8_t RM3_SupportedVersionsMain[][3] 	= {{2,1,16}};
+static const uint8_t RM3_NumberOfSupportedVersionsStim 	= 1;
+static const uint8_t RM3_SupportedVersionsStim[][3] 	= {{2,1,0}};
+static const uint8_t RM3_NumberOfSupportedVersionsSMPT 	= 1;
+static const uint8_t RM3_SupportedVersionsSMPT[][3] 	= {{3,2,4}};
+static const uint8_t RM3_ErrorWarningBand				= 3; // warning if difference of minor version number is smaller
 
 
 /*
@@ -80,6 +82,8 @@ static const uint8_t RMP_ErrorWarningBand				= 3; // warning if difference of mi
 #define REHAMOVE_SEQUENCE_QUEUE_SIZE						5
 #define REHAMOVE_ACK_THREAD_DELAY_US						1000
 
+#define REHAMOVE_MODE_LOWLEVEL								1
+#define REHAMOVE_MODE_MIDLEVEL								2
 #define REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX				16
 #define REHAMOVE_SHAPES__PW_MIN                        		10		// min. 10 us
 #define REHAMOVE_SHAPES__PW_MAX                        		4000	// max. 4000 us
@@ -223,7 +227,8 @@ enum PulseShapes_t {
 
 class RehaMove3 {
 public:
-	struct rmpStimSettings_t {
+	struct rmStimSettings_t {
+		uint8_t  rmProtocol;
 		uint8_t  StimFrequency;
 		uint16_t PulseWidthMax;
 		float	 CurrentMax;
@@ -232,11 +237,15 @@ public:
 		bool  	 UseThreadForInit;
 		bool	 UseThreadForAcks;
 	};
-	struct rmpLowLevelSettings_t {
+	struct rmLowLevelSettings_t {
 		uint8_t  HighVoltageLevel;
 		bool 	 UseDenervation;  // not implemented yet
 	};
-	struct rmpDebugSettings_t{
+	struct rmMidLevelSettings_t {
+			uint8_t  HighVoltageLevel;
+			bool 	 UseDenervation;  // not implemented yet
+	};
+	struct rmDebugSettings_t{
 		bool printDeviceInfos;
 		bool printInitInfos;
 		bool printInitSettings;
@@ -250,19 +259,20 @@ public:
 		bool disableVersionCheck;
 	};
 
-	struct rmpInitSettings_t {
+	struct rmInitSettings_t {
 		// General
 		bool 	checkDeviceIDs;
 		char 	RequestedDeviceID[Smpt_Length_Device_Id];
-		rmpStimSettings_t StimConfig;
+		rmStimSettings_t StimConfig;
 		// LowLevel
-		rmpLowLevelSettings_t LowLevelConfig;
+		rmLowLevelSettings_t LowLevelConfig;
 		// MidLevel
+		rmMidLevelSettings_t MidLevelConfig;
 		// Misc/Debug
-		rmpDebugSettings_t DebugConfig;
+		rmDebugSettings_t DebugConfig;
 	};
 
-	struct rmpGetStatus_t {
+	struct rmGetStatus_t {
 		bool DeviceIsOpen;
 		bool DeviceLlIsInitialised;
 		bool DeviceMlIsInitialised;
@@ -278,9 +288,9 @@ public:
 	RehaMove3(const char *DeviceID, const char *SerialDeviceFile);
 	~RehaMove3(void);
 
-	rmpGetStatus_t GetCurrentStatus(bool DoPrintStatus, bool DoPrintStatistic, uint16_t WaitTimeout);
+	rmGetStatus_t GetCurrentStatus(bool DoPrintStatus, bool DoPrintStatistic, uint16_t WaitTimeout);
 
-	bool 	InitialiseRehaMove3(rmpInitSettings_t *InitSetup, actionResult_t *InitResult);
+	bool 	InitialiseRehaMove3(rmInitSettings_t *InitSetup, actionResult_t *InitResult);
 	bool	InitialiseDevice(void);
 	bool 	IsDeviceInitialised(actionResult_t *InitResult);
 
@@ -297,16 +307,16 @@ private:
     	printMSG_general		= 1,
 		printMSG_warning		= 2,
 		printMSG_error			= 3,
-		printMSG_rmpDeviceInfo,
-		printMSG_rmpInitInfo,
-		printMSG_rmpInitParam,
-		printMSG_rmpSendCMD,
-		printMSG_rmpReceiveACK,
-		printMSG_rmpPulseConfig,
-		printMSG_rmpErrorUnclaimedSequence,
-		printMSG_rmpWarningCorrectionChargeInbalace,
-		printMSG_rmpSequenceError,
-		printMSG_rmpStats
+		printMSG_rmDeviceInfo,
+		printMSG_rmInitInfo,
+		printMSG_rmInitParam,
+		printMSG_rmSendCMD,
+		printMSG_rmReceiveACK,
+		printMSG_rmPulseConfig,
+		printMSG_rmErrorUnclaimedSequence,
+		printMSG_rmWarningCorrectionChargeInbalace,
+		printMSG_rmSequenceError,
+		printMSG_rmStats
     };
 
     //global parameter
@@ -315,7 +325,7 @@ private:
 	char DeviceIDClass[100];
 	char DeviceFileName[255];
 
-	struct rmpStatus_t {
+	struct rmStatus_t {
 		// General
 		bool DeviceIsOpen;
 		bool DeviceInitialised;
@@ -334,7 +344,7 @@ private:
 		bool DoReTestTheStimError;
 		uint16_t NumberOfSequencesUntilErrorRetest;
 
-		struct rmpDeviceStatus_t {
+		struct rmDeviceStatus_t {
 			// General
 			char DeviceID[Smpt_Length_Device_Id+1];
 			Smpt_uc_version MainVersion;
@@ -349,10 +359,10 @@ private:
 			uint8_t HighVoltageLevel;
 			uint8_t HighVoltageVoltage;
 		} Device;
-	} rmpStatus;
+	} rmStatus;
 
-	rmpInitSettings_t 	rmpInitSettings;
-	struct rmpSettings_t {
+	rmInitSettings_t 	rmInitSettings;
+	struct rmSettings_t {
 		// Stimulation
 		uint8_t  StimFrequency;
 		uint16_t MaxPulseWidth;
@@ -362,11 +372,11 @@ private:
 		bool  	 UseThreadForInit;
 		bool	 UseThreadForAcks;
 		bool 	 DenervationIsUsed;
-	}rmpSettings;
+	}rmSettings;
 
 	pthread_t       InitThread;
-	actionResult_t  rmpInitResult;
-	actionResult_t* rmpInitResultExtern;
+	actionResult_t  rmInitResult;
+	actionResult_t* rmInitResultExtern;
     pthread_t       ReceiverThread;
     pthread_mutex_t ReadPackage_mutex;
     LowLevelAcks_t 	Acks;
