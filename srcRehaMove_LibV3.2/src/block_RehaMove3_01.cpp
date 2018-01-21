@@ -24,12 +24,12 @@
 #include <cmath>
 
 #include <block_RehaMove3_01.hpp>
-#define WITH_HW // Define for Debugging only
+//#define WITH_HW // Define for Debugging only
 
 using namespace nsRehaMove3_SMPT_32X_01;
 
 //sfunc_RehaMove3_XX
-void lctRM3_Initialise(  void **work1, uint16_t stimOptions[], uint16_t sizeStimOptions, uint16_t llOptions[], uint16_t sizeLlOptions, uint16_t mlOptions[], uint16_t sizeMlOptions, uint16_t miscOptions[], uint16_t sizeMiscOptions, uint16_t inputSize1, uint16_t inputSize2, double sampleTime )
+void lctRM3_Initialise(  void **work1, uint16_t stimOptions[], uint16_t sizeStimOptions, uint16_t llOptions[], uint16_t sizeLlOptions, double mlOptions[], uint16_t sizeMlOptions, uint16_t miscOptions[], uint16_t sizeMiscOptions, uint16_t inputSize1, uint16_t inputSize2_1, uint16_t inputSize2_2, double sampleTime )
 {
 	// create the stimulator block object and add it to the Simulink block struct
 	block_RehaMove3 *bRehaMove3 = new block_RehaMove3();
@@ -44,59 +44,68 @@ void lctRM3_Initialise(  void **work1, uint16_t stimOptions[], uint16_t sizeStim
 
 	// Stim / General options
 	bRehaMove3->TransverStimOptions(stimOptions, sizeStimOptions);
-	if (bRehaMove3->stimOptions.rmProtocol == 1){
+	bRehaMove3->rmStatus.deviceInitialisationAborted = false;
+	switch (bRehaMove3->stimOptions.rmProtocol){
+	case RM3_LOW_LEVEL_STIMULATION_PROTOCOL1:
+	case RM3_LOW_LEVEL_STIMULATION_PROTOCOL2:
 		// LowLevel options
 		bRehaMove3->TransverLlOptions(llOptions, sizeLlOptions);
-	}
-	if (bRehaMove3->stimOptions.rmProtocol == 2){
+		break;
+	case RM3_MID_LEVEL_STIMULATION_PROTOCOL:
 		// MidLevel options
 		bRehaMove3->TransverMlOptions(mlOptions, sizeMlOptions);
+		break;
+	default:
+		printf("%s Error: Communication protocol %u is invalid! -> Initialisation aborted!\n\n", bRehaMove3->stimOptions.blockID, bRehaMove3->stimOptions.rmProtocol);
+		bRehaMove3->rmStatus.deviceInitialisationAborted = true;
 	}
 	// Debug options
 	bRehaMove3->TransverMiscOptions(miscOptions, sizeMiscOptions, true);
 	// input/output sizes and sample time
 	bRehaMove3->ioSize.sizeStimIn1 = inputSize1;
-	bRehaMove3->ioSize.sizeStimIn2 = inputSize2;
+	bRehaMove3->ioSize.sizeStimIn2_1 = inputSize2_1;
+	bRehaMove3->ioSize.sizeStimIn2_2 = inputSize2_2;
 	bRehaMove3->sampleTime = sampleTime;
 	if (bRehaMove3->miscOptions.debugPrintBlockParameter){
-		printf("%s Block Debug: Input/Output Parameter\n  Input Size Stim 1: %u\n  Input Size Stim 2: %u\n  Output Size Stim Status: %u\n  Sample Time: %f\n\n",
-				bRehaMove3->stimOptions.blockID, bRehaMove3->ioSize.sizeStimIn1, bRehaMove3->ioSize.sizeStimIn2, 3, bRehaMove3->sampleTime);
+		printf("%s Block Debug: Input/Output Parameter\n  Input Size 'Pulse Width': %ux%u\n  Input Size 'Current': %ux%u\n  Output Size Stim Status: %ux%u\n  Sample Time: %f\n\n",
+				bRehaMove3->stimOptions.blockID, bRehaMove3->ioSize.sizeStimIn1, bRehaMove3->ioSize.sizeStimIn2_1, bRehaMove3->ioSize.sizeStimIn1, bRehaMove3->ioSize.sizeStimIn2_2, 3, 1, bRehaMove3->sampleTime);
 	}
 
 #ifdef WITH_HW
-    // Create Device Class
+	// Create Device Class
 	bRehaMove3->Device = new nsRehaMove3_SMPT_32X_01::RehaMove3(bRehaMove3->stimOptions.blockID, bRehaMove3->stimOptions.devicePath);
-
-    // initialise the RehaMove Pro system
-    if (bRehaMove3->Device->InitialiseRehaMove3(&bRehaMove3->rmInitSettings, &bRehaMove3->rmResult)) {
-    	// the initialisation was successful
-    	bRehaMove3->rmStatus.deviceIsInitialised = true;
-    	bRehaMove3->rmStatus.stimStatus1 = 1;
-	} else {
-		// the initialisation failed
-		if (bRehaMove3->rmResult.finished){
-			printf("%s Error: Initialisation failed!\n\n", bRehaMove3->stimOptions.blockID);
-		}
-		bRehaMove3->rmStatus.deviceIsInitialised = false;
-		bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_notInitialised;
-		// take care of specific erros
-		switch(bRehaMove3->rmResult.errorCode){
-		case actionError_openingDevice:
-			bRehaMove3->rmStatus.deviceOpeningFailed = true;
-			bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_openingDevice;
-			break;
-		case actionError_checkDeviceIDs:
-			bRehaMove3->rmStatus.deviceIDsDidNotMatch = true;
-			bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_checkDeviceIDs;
-			break;
-		default:;
+	if (!bRehaMove3->rmStatus.deviceInitialisationAborted){
+		// initialise the RehaMove Pro system
+		if (bRehaMove3->Device->InitialiseRehaMove3(&bRehaMove3->rmInitSettings, &bRehaMove3->rmResult)) {
+			// the initialisation was successful
+			bRehaMove3->rmStatus.deviceIsInitialised = true;
+			bRehaMove3->rmStatus.stimStatus1 = 1;
+		} else {
+			// the initialisation failed
+			if (bRehaMove3->rmResult.finished){
+				printf("%s Error: Initialisation failed!\n\n", bRehaMove3->stimOptions.blockID);
+			}
+			bRehaMove3->rmStatus.deviceIsInitialised = false;
+			bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_notInitialised;
+			// take care of specific errors
+			switch(bRehaMove3->rmResult.errorCode){
+			case actionError_openingDevice:
+				bRehaMove3->rmStatus.deviceOpeningFailed = true;
+				bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_openingDevice;
+				break;
+			case actionError_checkDeviceIDs:
+				bRehaMove3->rmStatus.deviceIDsDidNotMatch = true;
+				bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_checkDeviceIDs;
+				break;
+			default:;
+			}
 		}
 	}
 #endif
 
-    if (bRehaMove3->miscOptions.debugPrintBlockParameter){
-    	printf("\n#############################################\nDEBUG OUTPUT for RehaMove3 Init -> STOP\n\n");
-    }
+	if (bRehaMove3->miscOptions.debugPrintBlockParameter){
+		printf("\n#############################################\nDEBUG OUTPUT for RehaMove3 Init -> STOP\n\n");
+	}
 }
 
 
@@ -106,26 +115,37 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 	double *pwIn		= u1;
 	double *currentIn 	= u2;
 
+	if (bRehaMove3->rmStatus.deviceInitialisationAborted){
+		y1[0] = -2; // stimulator is NOT initialised and initialisation was aborted
+		y1[1] = 0;
+		y1[2] = 0;
+		return;
+	}
+
 #ifdef WITH_HW
 	if (bRehaMove3->rmStatus.deviceIsInitialised){
 		/*
 		 * Read the responses
 		 */
-		y1[0] = bRehaMove3->rmStatus.stimStatus1;
-		bool WasSequenceComplete = false;
-		uint16_t PulseErrors = 0;
-		// TODO richtiges Konzept für die Rückgabewerte...
-		if (bRehaMove3->Device->GetLastSequenceResult(&PulseErrors, &WasSequenceComplete)){
+		bool LastStimulationSuccessful = false;
+		double PulseErrors = 0;
+
+		switch(bRehaMove3->stimOptions.rmProtocol){
+		case RM3_LOW_LEVEL_STIMULATION_PROTOCOL1:
+		case RM3_LOW_LEVEL_STIMULATION_PROTOCOL2:
+			LastStimulationSuccessful = bRehaMove3->Device->GetLastLowLevelStimulationResult(&PulseErrors);
+			break;
+		case RM3_MID_LEVEL_STIMULATION_PROTOCOL:
+			LastStimulationSuccessful = bRehaMove3->Device->GetLastMidLevelStimulationResult(&PulseErrors);
+			break;
+		}
+
+		if (LastStimulationSuccessful){
+			y1[0] = bRehaMove3->rmStatus.stimStatus1;
 			y1[1] = 0.0;	// no errors during pulse generation
-			y1[2] = 0.0;	// no problems with the sequence results
 		} else {
-			y1[0] =  0.0; // mark this as error
+			y1[0] =  0.0; 	// mark this as error
 			y1[1] = (double)PulseErrors;
-			if (WasSequenceComplete) {
-				y1[2] =  0.0; // no problems with the sequence results
-			} else {
-				y1[2] = -1.0; // there are problems with the sequence results
-			}
 		}
 
 		/*
@@ -143,22 +163,23 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 						// the channel is 0 -> go to the next channel
 						continue;
 					}
-					bRehaMove3->SequenceConfig.PulseConfig[j].Channel = bRehaMove3->stimOptions.channelsActive[i];
-					bRehaMove3->SequenceConfig.PulseConfig[j].Shape = bRehaMove3->llOptions.channelsPulseForm[i];
-					bRehaMove3->SequenceConfig.PulseConfig[j].PulseWidth = (uint16_t)pwIn[i];
-					bRehaMove3->SequenceConfig.PulseConfig[j].Current = (float)currentIn[i];
+					bRehaMove3->LlSequenceConfig.PulseConfig[j].Channel = bRehaMove3->stimOptions.channelsActive[i];
+					bRehaMove3->LlSequenceConfig.PulseConfig[j].Shape = bRehaMove3->llOptions.channelsPulseForm[i];
+					bRehaMove3->LlSequenceConfig.PulseConfig[j].PulseWidth = (uint16_t)pwIn[i];
+					bRehaMove3->LlSequenceConfig.PulseConfig[j].Current = (float)currentIn[i];
 					// next stimulation pulse
 					j++;
 				}
 			}
-			bRehaMove3->SequenceConfig.NumberOfPulses = j;
+			bRehaMove3->LlSequenceConfig.NumberOfPulses = j;
 
 			// send the new sequence
-			bRehaMove3->Device->SendNewPreDefinedLowLevelSequence(&bRehaMove3->SequenceConfig);
+			bRehaMove3->Device->SendNewPreDefinedLowLevelSequence(&bRehaMove3->LlSequenceConfig);
 			break;}
 
 		case RM3_LOW_LEVEL_STIMULATION_PROTOCOL2:{
 			// LowLevel with user supplied stimulation pulse forms
+			// TODO
 			if (bRehaMove3->rmStatus.outputCounter  >= bRehaMove3->rmStatus.outputCounterNext){
 				printf("%s Error: 'LowLevel' with user supplied pulse forms is not yet supported!\n", bRehaMove3->stimOptions.blockID);
 				bRehaMove3->rmStatus.outputCounter = 0;
@@ -170,13 +191,34 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 
 		case RM3_MID_LEVEL_STIMULATION_PROTOCOL:{
 			// MidLevel stimulation
-			if (bRehaMove3->rmStatus.outputCounter  >= bRehaMove3->rmStatus.outputCounterNext){
-				printf("%s Error: 'MidLevel' is not yet supported!\n", bRehaMove3->stimOptions.blockID);
-				bRehaMove3->rmStatus.outputCounter = 0;
-				bRehaMove3->rmStatus.outputCounterNext = (bRehaMove3->rmStatus.outputCounterNext +1) *2;
-			} else {
-				bRehaMove3->rmStatus.outputCounter++;
+			memset(&bRehaMove3->MlUpdateConfig, 0, sizeof(RehaMove3::MlUpdateConfig_t));
+
+			int8_t iCh = 0;
+			for (uint8_t i=0; i < bRehaMove3->stimOptions.numberOfActiveChannels; i++){
+				iCh = bRehaMove3->stimOptions.channelsActive[i] -1;
+				if (iCh >= 0 && iCh < REHAMOVE_NUMBER_OF_CHANNELS){
+					// check that the pulse width is not 0; the current can be 0
+					if (pwIn[i] != 0.0){
+						// build stimulation configuration
+						bRehaMove3->MlUpdateConfig.ForceUpdate = false;
+						bRehaMove3->MlUpdateConfig.RedoRamp = false;
+						bRehaMove3->MlUpdateConfig.ActiveChannels[iCh] = true;
+						bRehaMove3->MlUpdateConfig.PulseConfig[iCh].Channel = iCh;
+						bRehaMove3->MlUpdateConfig.PulseConfig[iCh].Shape = Shape_Balanced_Symetric_Biphasic;
+						if (bRehaMove3->rmInitSettings.MidLevelConfig.UseDynamicStimulationFrequncy){
+							bRehaMove3->MlUpdateConfig.PulseConfig[iCh].Frequency =  (uint16_t)pwIn[i*2+0];
+							bRehaMove3->MlUpdateConfig.PulseConfig[iCh].PulseWidth = (uint16_t)pwIn[i*2+1];
+						} else {
+							bRehaMove3->MlUpdateConfig.PulseConfig[iCh].Frequency = (float)bRehaMove3->rmInitSettings.MidLevelConfig.GeneralStimFrequency;
+							bRehaMove3->MlUpdateConfig.PulseConfig[iCh].PulseWidth = (uint16_t)pwIn[i];
+						}
+						bRehaMove3->MlUpdateConfig.PulseConfig[iCh].Current = (float)currentIn[i];
+					}
+				}
 			}
+
+			// send the update
+			bRehaMove3->Device->SendMidLevelUpdate(&bRehaMove3->MlUpdateConfig);
 			break;}
 
 		default:
@@ -251,13 +293,16 @@ block_RehaMove3::block_RehaMove3(void)
 
 	memset(&this->rmResult, 0, sizeof(this->rmResult));
 	memset(&this->rmInitSettings, 0, sizeof(this->rmInitSettings));
-	memset(&this->SequenceConfig, 0, sizeof(this->SequenceConfig));
-
+	memset(&this->LlSequenceConfig, 0, sizeof(this->LlSequenceConfig));
+	memset(&this->LlCustomSequenceConfig, 0, sizeof(this->LlCustomSequenceConfig));
+	memset(&this->MlUpdateConfig, 0, sizeof(this->MlUpdateConfig));
 }
 block_RehaMove3::~block_RehaMove3(void)
 {
 #ifdef WITH_HW
-	this->Device->DeInitialiseDevice(this->miscOptions.debug.printInitInfos, this->miscOptions.debug.printStats);
+	if (!this->rmStatus.deviceInitialisationAborted){
+		this->Device->DeInitialiseDevice(this->miscOptions.debug.printInitInfos, this->miscOptions.debug.printStats);
+	}
 	this->rmStatus.deviceIsInitialised = false;
 	delete Device;
 #endif
@@ -311,12 +356,12 @@ void block_RehaMove3::TransverStimOptions(uint16_t *parameter, uint16_t paramete
 			printf("%u ", this->stimOptions.channelsActive[i]);
 		}
 		char rmProtocol[100];
-		if (this->stimOptions.rmProtocol == 2){
+		if (this->stimOptions.rmProtocol == RM3_MID_LEVEL_STIMULATION_PROTOCOL){
 			sprintf(rmProtocol, "MidLevel Protocol");
 		} else {
 			sprintf(rmProtocol, "LowLevel Protocol");
 		}
-		printf("]\n  Stimulation Frequency: %u.00 Hz\n  RehaMove3 Protocol: %s\n  Max. Current: %0.1f mA\n  Max. Pulse Width: %u µs\n  Abort after N Errors: %u\n  ReTest after N secounds: %0.2f s\n",
+		printf("]\n  Stimulation Frequency: %u.00 Hz\n  RehaMove3 Protocol: %s\n  Max. Current: %0.1f mA\n  Max. Pulse Width: %u µs\n  Abort after N Errors: %u\n  ReTest after N seconds: %0.2f s\n",
 				this->stimOptions.stimFrequency, rmProtocol, this->stimOptions.maxCurrent, this->stimOptions.maxPulseWidth, this->stimOptions.errorAbortAfter, ((double)this->stimOptions.errorRetestAfter / (double)this->stimOptions.stimFrequency));
 		printf("  Use Thread for Init: %u\n  Use Thread for Data: %u\n",
 				this->stimOptions.useThreadForInit, this->stimOptions.useThreadForAcks);
@@ -336,7 +381,7 @@ void block_RehaMove3::TransverLlOptions(uint16_t *parameter, uint16_t parameterS
 
 
 	this->rmInitSettings.LowLevelConfig.HighVoltageLevel = this->llOptions.maxStimVoltage;
-	this->rmInitSettings.LowLevelConfig.UseDenervation = false; // TODO add feature
+	this->rmInitSettings.LowLevelConfig.UseDenervation = false; // TODO add feature if supported
 
 	if (this->miscOptions.debugPrintBlockParameter){
 		uint8_t maxStimVoltage = 0;
@@ -359,11 +404,31 @@ void block_RehaMove3::TransverLlOptions(uint16_t *parameter, uint16_t parameterS
 				this->llOptions.pulseFormGivenAsInput, this->llOptions.numberOfPulseParts, maxStimVoltage, this->llOptions.useDenervation);
 	}
 }
-void block_RehaMove3::TransverMlOptions(uint16_t *parameter, uint16_t parameterSize)
+void block_RehaMove3::TransverMlOptions(double *parameter, uint16_t parameterSize)
 {
+	uint16_t i = 0;
+	this->mlOptions.fStimML = parameter[i++];
+	this->mlOptions.useDynamicStimulationFrequncy = (parameter[i++] == 1);
+	this->mlOptions.useSoftStart = (parameter[i++] == 1);
+	this->mlOptions.useRamps = (parameter[i++] == 1);
+	this->mlOptions.rampsUpdates = parameter[i++];
+	this->mlOptions.rampsZeroUpdates = parameter[i++];
+	this->mlOptions.nKeepAlive = parameter[i++];
+
+	this-> rmInitSettings.MidLevelConfig.GeneralStimFrequency = this->mlOptions.fStimML;
+	this-> rmInitSettings.MidLevelConfig.UseDynamicStimulationFrequncy = this->mlOptions.useDynamicStimulationFrequncy;
+	this-> rmInitSettings.MidLevelConfig.UseSoftStart = this->mlOptions.useSoftStart;
+	this-> rmInitSettings.MidLevelConfig.SetRampsDuringPeriodicMlUpdateCall = true;
+	this-> rmInitSettings.MidLevelConfig.UseRamps = this->mlOptions.useRamps;
+	this-> rmInitSettings.MidLevelConfig.RampsUpdates = this->mlOptions.rampsUpdates;
+	this-> rmInitSettings.MidLevelConfig.RampsZeroUpdates = this->mlOptions.rampsZeroUpdates;
+	this-> rmInitSettings.MidLevelConfig.SendKeepAliveSignalDuringPeriodicMlUpdateCall = true;
+	this-> rmInitSettings.MidLevelConfig.KeepAliveNumberOfUpdateCalls = this->mlOptions.nKeepAlive;
+
 	if (this->miscOptions.debugPrintBlockParameter){
-		printf("%s Block Debug: MidLevel Parameter (%u values)\n  \n",
-						this->stimOptions.blockID, parameterSize);
+		printf("%s Block Debug: MidLevel Parameter (%u values)\n  Stimulation Frequency: %f; dynamic: %u\n  Number of In/Out calls until KeepAlive signal is send: %1.0f\n  SoftStart: %u\n  intensity ramp up: %u; during %1.0f updates; re-do the ramp after %1.0f zero updates\n",
+						this->stimOptions.blockID, parameterSize, this->mlOptions.fStimML, this->mlOptions.useDynamicStimulationFrequncy, this->mlOptions.nKeepAlive, this->mlOptions.useSoftStart,
+						this->mlOptions.useRamps, this->mlOptions.rampsUpdates, this->mlOptions.rampsZeroUpdates);
 	}
 }
 void block_RehaMove3::TransverMiscOptions(uint16_t *parameter, uint16_t parameterSize, bool printDebugInfo)

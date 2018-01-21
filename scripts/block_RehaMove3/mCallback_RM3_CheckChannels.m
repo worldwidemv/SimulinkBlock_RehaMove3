@@ -14,8 +14,12 @@ function mCallback_RM3_CheckChannels( )
     %% check the input value
     channelsStr = get_param(gcb, 'stimChannels');
     channels = round( evalin('caller', channelsStr) );
+
+    mode = get_param(gcb, 'stimRehaMoveProProtocol');
+    channelSet = [false, false, false, false];
     
     has_error = false;
+    has_errorML = false;
     for i = 1:length(channels)
         if (channels(i) < 0)
             channels(i) = 0; 
@@ -29,17 +33,24 @@ function mCallback_RM3_CheckChannels( )
             channels(i) = round(channels(i)); 
             has_error = true;
         end
+        
+        % MidLevel Mode -> allow each channel only one time
+        if strcmp(mode, 'Use the MidLevel protocol   -> Only stimulation pulse updates are send.')
+            if (channels(i) ~= 0)
+                if channelSet(channels(i))
+                    channels(i) = 0; 
+                    has_errorML = true;
+                else
+                    channelSet(channels(i)) = true;
+                end 
+            end
+        end
     end
     if (has_error)
         errordlg('Channels must be integers from 1 to 4!','Channel Config Error');
     end
-    
-    switch get_param(gcb, 'stimRehaMoveProProtocol')
-    case ' Use the MidLevel protocol   -> Only stimulation pulse updates are send.'
-        if (size(channels,2) ~= size(unique(channels),2))
-            channels = unique(channels);
-            errordlg('While using the MidLevel protocol, channels must be UNIQUE integers from 1 to 4!','Channel Config Error');
-        end
+    if (has_errorML)
+        errordlg('The MidLevel Mode allows each channel only ONCE!','Channel Config Error');
     end
     
     % check the number of channels

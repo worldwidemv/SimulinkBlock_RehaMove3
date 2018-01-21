@@ -71,7 +71,7 @@ int main(int argc, char *argv[]) {
 	gettimeofday(&Time, NULL);
 	T0 = Time.tv_sec * 1000 + Time.tv_usec / 1000;
 
-	RehaMove3::rmpInitSettings_t InitSetup = {0};
+	RehaMove3::rmInitSettings_t InitSetup = {0};
 
 	// LowLevel
 	InitSetup.StimConfig.StimFrequency = 20;
@@ -96,7 +96,7 @@ int main(int argc, char *argv[]) {
 	InitSetup.DebugConfig.disableVersionCheck = true;
 	InitSetup.DebugConfig.useColors = true;
 
-	SequenceConfig_t SC = {};
+	RehaMove3::LlSequenceConfig_t SC = {};
 	SC.NumberOfPulses = 1;
 	SC.PulseConfig[0].Channel = Smpt_Channel_Red+1;
 	SC.PulseConfig[0].Current = 5;
@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
 	SC.PulseConfig[2].Shape = Shape_Balanced_Symetric_Biphasic_NEGATIVE;
 
 	// Initialisation RehaMove Pro System
-	actionResult_t Result;
+	RehaMove3::actionResult_t Result;
 	if (!Device->InitialiseRehaMove3(&InitSetup, &Result)) {
 		if (!InitSetup.StimConfig.UseThreadForInit){
 			printf("RehaMove Pro: Initialisation failed!\n\n");
@@ -159,9 +159,8 @@ int main(int argc, char *argv[]) {
 	printf("\n   -->  0 %% done ....");
 	fflush(stdout);
 
-	RehaMove3::rmpGetStatus_t Status = Device->GetCurrentStatus(false, false, 0);
-	uint16_t Errors;
-	bool     SequenceComplete;
+	RehaMove3::rmGetStatus_t Status = Device->GetCurrentStatus(false, false, 0);
+	double Errors;
 
 	usleep(50000); // 50ms
 	while (PackageNumber < (int) ValuesToGet) {
@@ -170,14 +169,9 @@ int main(int argc, char *argv[]) {
 		T2 = Time.tv_sec * 1000.0 + Time.tv_usec / 1000.0;
 
 		// get the results
-		SequenceComplete = false;
-		Errors = 0;
-		if (!Device->GetLastSequenceResult(&Errors, &SequenceComplete)){
+		if (!Device->GetLastLowLevelStimulationResult(&Errors)){
 			if (Errors != 0){
-				printf("\n### Sequence failed -> Channels: %d\n\n", Errors);
-			}
-			if (!SequenceComplete){
-				printf("\n### Sequence was incomplete\n\n");
+				printf("\n### Sequence failed -> Channels: %1.0f\n\n", Errors);
 			}
 		} else {
 			printf("\n### Sequence was SUCCESSFUL\n\n");
