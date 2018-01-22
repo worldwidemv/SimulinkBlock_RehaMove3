@@ -24,7 +24,7 @@
 #include <cmath>
 
 #include <block_RehaMove3_01.hpp>
-//#define WITH_HW // Define for Debugging only
+#define WITH_HW // Define for Debugging only
 
 using namespace nsRehaMove3_SMPT_32X_01;
 
@@ -118,7 +118,6 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 	if (bRehaMove3->rmStatus.deviceInitialisationAborted){
 		y1[0] = -2; // stimulator is NOT initialised and initialisation was aborted
 		y1[1] = 0;
-		y1[2] = 0;
 		return;
 	}
 
@@ -179,14 +178,35 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 
 		case RM3_LOW_LEVEL_STIMULATION_PROTOCOL2:{
 			// LowLevel with user supplied stimulation pulse forms
-			// TODO
-			if (bRehaMove3->rmStatus.outputCounter  >= bRehaMove3->rmStatus.outputCounterNext){
-				printf("%s Error: 'LowLevel' with user supplied pulse forms is not yet supported!\n", bRehaMove3->stimOptions.blockID);
-				bRehaMove3->rmStatus.outputCounter = 0;
-				bRehaMove3->rmStatus.outputCounterNext = (bRehaMove3->rmStatus.outputCounterNext +1) *2;
-			} else {
-				bRehaMove3->rmStatus.outputCounter++;
+			uint8_t j = 0, nPoints = (uint8_t)bRehaMove3->ioSize.sizeStimIn2_1;
+			memset(&bRehaMove3->LlCustomSequenceConfig, 0, sizeof(bRehaMove3->LlCustomSequenceConfig));
+			for (uint8_t iCh=0; iCh < bRehaMove3->stimOptions.numberOfActiveChannels; iCh++){
+				// see if the channel is active
+				if (bRehaMove3->stimOptions.channelsActive[iCh] == 0){
+					// the channel is 0 -> go to the next channel
+					continue;
+				}
+				// check that the channel IDs from PW and Cur match
+				if ( (((uint8_t)pwIn[iCh*nPoints +0]) != bRehaMove3->stimOptions.channelsActive[iCh]) || (((uint8_t)currentIn[iCh*nPoints +0]) != bRehaMove3->stimOptions.channelsActive[iCh]) ){
+					// the channel IDs do not match -> mark this at the status outputs and go to the next channel
+					y1[0] = -100.0;
+					y1[1] = iCh+1;
+					continue;
+				}
+				bRehaMove3->LlCustomSequenceConfig.PulseConfig[j].Channel = bRehaMove3->stimOptions.channelsActive[iCh];
+				bRehaMove3->LlCustomSequenceConfig.PulseConfig[j].NumberOfPoints = nPoints -1;
+				// build stimulation configuration
+				for (uint8_t iP=1; iP < nPoints; iP++){
+					bRehaMove3->LlCustomSequenceConfig.PulseConfig[j].PulseWidth[iP-1] = (uint16_t)pwIn[iCh*nPoints +iP];
+					bRehaMove3->LlCustomSequenceConfig.PulseConfig[j].Current[iP-1]    = (float)currentIn[iCh*nPoints +iP];
+				}
+				// next stimulation pulse
+				j++;
 			}
+			bRehaMove3->LlCustomSequenceConfig.NumberOfPulses = j;
+
+			// send the new sequence
+			bRehaMove3->Device->SendNewCustomLowLevelSequence(&bRehaMove3->LlCustomSequenceConfig);
 			break;}
 
 		case RM3_MID_LEVEL_STIMULATION_PROTOCOL:{
