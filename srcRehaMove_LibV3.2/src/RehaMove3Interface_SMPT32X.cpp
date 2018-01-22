@@ -90,7 +90,7 @@ RehaMove3::RehaMove3(const char *DeviceID, const char *SerialDeviceFile)
 	pthread_mutex_init(&this->ReadPackage_mutex, NULL);
 	pthread_mutex_init(&this->AcksLock_mutex, NULL);
 	pthread_mutex_init(&this->ResponseQueueLock_mutex, NULL);
-	pthread_mutex_init(&this->SequenceQueueLock_mutex, NULL);
+	pthread_mutex_init(&this->LlSequenceQueueLock_mutex, NULL);
 
 	// the initialisation of the class instance is done
 	this->ClassInstanceInitialised = true;
@@ -115,7 +115,7 @@ RehaMove3::~RehaMove3(void) {
 	pthread_mutex_destroy(&this->ReadPackage_mutex);
 	pthread_mutex_destroy(&this->AcksLock_mutex);
 	pthread_mutex_destroy(&this->ResponseQueueLock_mutex);
-	pthread_mutex_destroy(&this->SequenceQueueLock_mutex);
+	pthread_mutex_destroy(&this->LlSequenceQueueLock_mutex);
 }
 
 bool RehaMove3::IsDeviceInitialised(actionResult_t *InitResult) {
@@ -474,11 +474,11 @@ bool RehaMove3::InitialiseDevice(void)
 						// update the internal status
 						this->rmStatus.DeviceLlIsInitialised = true;
 						// lock the sequence queue
-						pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
+						pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 						// show the warning about a full queue only one -> reset the value to true
-						this->SequenceQueue.DoNotReportUnclaimedSequenceResults = true;
+						this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults = true;
 						// unlock the sequence queue
-						pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
+						pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
 						RehaMove3::printMessage(printMSG_rmInitParam, "     -> SUCCESSFUL initialised\n");
 					}
 				} else {
@@ -725,7 +725,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 
 		case Shape_UNbalanced_UNsymetric_Monophasic:
 		case Shape_UNbalanced_UNsymetric_Monophasic_NEGATIVE:
-			// 4/5 -> monophasic pulse; charge not balanced
+			// 4/5 -> monophasic pulse; charge balanced
 			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_UNbalanced_UNsymetric_Monophasic_NEGATIVE){
 				// handle the negative case
 				SequenceConfig->PulseConfig[i_Puls].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Puls].Current);
@@ -941,7 +941,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 				OneOrMorePulsesSend = true;
 				this->Stats.StimultionPulsesSend++;
 				// add the expected response to the ChannelResponse queue
-				PutChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
+				PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
 			} else {
 				// error: failed to send the configuration
 				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
@@ -1106,7 +1106,7 @@ bool RehaMove3::SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSe
 				OneOrMorePulsesSend = true;
 				this->Stats.StimultionPulsesSend++;
 				// add the expected response to the ChannelResponse queue
-				PutChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
+				PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
 			} else {
 				// error: failed to send the configuration
 				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
@@ -1409,19 +1409,19 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 	// check for ACKs and process them
 	RehaMove3::ReadAcksBlocking();
 	// lock the  sequence queue
-	pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 
 	// get the last sequence and get the status of that sequence
 	// -> is there a sequence?
-	if (this->SequenceQueue.QueueSize > 0){
+	if (this->LlSequenceQueue.QueueSize > 0){
 		// yes, there is a sequence
 
 		// was the sequence successful ?
-		if (!this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].SequenceWasSuccessful){
+		if (!this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceWasSuccessful){
 			// there was an error -> encode the pulses that did fail
 			// encode the pulse errors
-			for (uint8_t i = 0; i < this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfAcks; i++){
-				if (this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].StimulationPulse[i].Result != Smpt_Result_Successful){
+			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks; i++){
+				if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].StimulationPulse[i].Result != Smpt_Result_Successful){
 					// encode the failed pulses as bits
 					if (PulseErrors != NULL){
 						*PulseErrors = i +1;
@@ -1434,19 +1434,19 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 		}
 
 		// is the sequence complete ?
-		if (this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfAcks == this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfPulses){
+		if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks == this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfPulses){
 			// yes, this sequence did receive acks for all pulses -> remove the sequence by increasing the QueueTail
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].SequenceNumber = 0;
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].SequenceWasSuccessful = false;
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfPulses = 0;
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfAcks = 0;
-			this->SequenceQueue.QueueSize--;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceNumber = 0;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceWasSuccessful = false;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfPulses = 0;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks = 0;
+			this->LlSequenceQueue.QueueSize--;
 			// increase the counter?
-			if (this->SequenceQueue.QueueTail != this->SequenceQueue.QueueHead){
+			if (this->LlSequenceQueue.QueueTail != this->LlSequenceQueue.QueueHead){
 				// yes, increase the counter
-				this->SequenceQueue.QueueTail++;
-				if (this->SequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
-					this->SequenceQueue.QueueTail = 0;
+				this->LlSequenceQueue.QueueTail++;
+				if (this->LlSequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+					this->LlSequenceQueue.QueueTail = 0;
 				}
 			}
 		} else {
@@ -1454,13 +1454,13 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 
 			RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The sequence acknowledgement queue contains a sequence with unacknowledged pulses!\n", this->DeviceIDClass);
 			// is there another sequence?
-			if (this->SequenceQueue.QueueSize > 1) {
+			if (this->LlSequenceQueue.QueueSize > 1) {
 				// did this other sequence receive a ack?
-				uint8_t tempQueueElement = this->SequenceQueue.QueueTail +1;
+				uint8_t tempQueueElement = this->LlSequenceQueue.QueueTail +1;
 				if (tempQueueElement >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
 					tempQueueElement = 0;
 				}
-				if ( this->SequenceQueue.Queue[tempQueueElement].NumberOfAcks > 0 ) {
+				if ( this->LlSequenceQueue.Queue[tempQueueElement].NumberOfAcks > 0 ) {
 					// queue end was not reached -> there is a sequence with unacknowledged pulses
 					RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "     -> There might be undetected errors. Please check your your usage of the RehaMove3 interface class!\n");
 				} else {
@@ -1494,7 +1494,7 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 	}
 
 	// unlock the sequence queue
-	pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
 
 	return ReturnValue;
 }
@@ -2117,7 +2117,7 @@ bool RehaMove3::ReadAcks(void)
 				// Writes the received data into ll_channel_config_ack
 				smpt_get_ll_channel_config_ack(&(this->Device), &LlChannelAck);
 				// push the result into the sequence queue
-				RehaMove3::PutChannelResponse(LlChannelAck.packet_number, LlChannelAck.result, LlChannelAck.electrode_error);
+				RehaMove3::PutLLChannelResponse(LlChannelAck.packet_number, LlChannelAck.result, LlChannelAck.electrode_error);
 				// the response is handled -> do not add this response to the response queue
 				continue;
 				break;
@@ -2462,78 +2462,78 @@ int RehaMove3::GetResponse(Smpt_Cmd ExpectedCommand, bool AddExpectedResponse, i
 }
 
 
-void RehaMove3::PutChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber)
+void RehaMove3::PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber)
 {
 	/*
 	 * Add the expected stimulation response to the queue
 	 */
 	// lock the queue
-	pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 
 	// add a new sequence or add a pulse to the last one?
-	if (this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].SequenceNumber != SequenceNumber){
+	if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceNumber != SequenceNumber){
 		// yes, this a new sequence
 		// increase the counter?
-		if (this->SequenceQueue.QueueSize != 0){
-			this->SequenceQueue.QueueHead++;
-			if (this->SequenceQueue.QueueHead >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
-				this->SequenceQueue.QueueHead = 0;
+		if (this->LlSequenceQueue.QueueSize != 0){
+			this->LlSequenceQueue.QueueHead++;
+			if (this->LlSequenceQueue.QueueHead >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+				this->LlSequenceQueue.QueueHead = 0;
 			}
-			if (this->SequenceQueue.QueueHead == this->SequenceQueue.QueueTail) {
+			if (this->LlSequenceQueue.QueueHead == this->LlSequenceQueue.QueueTail) {
 				// queue end was overrun -> we lose data
-				if (!this->SequenceQueue.DoNotReportUnclaimedSequenceResults){
+				if (!this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults){
 					RehaMove3::printMessage(printMSG_error, "%s Error: The sequence acknowlegement queue did overflow!\n     -> The oldest sequence will be discarded.\n     -> This might happen, because the sequence acknowlegements are not pulled!\n     -> This is the ONLY message about the error!\n", this->DeviceIDClass);
 					// show this warning only once
-					this->SequenceQueue.DoNotReportUnclaimedSequenceResults = true;
+					this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults = true;
 				}
-				this->SequenceQueue.QueueTail++;
-				if (this->SequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
-					this->SequenceQueue.QueueTail = 0;
+				this->LlSequenceQueue.QueueTail++;
+				if (this->LlSequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+					this->LlSequenceQueue.QueueTail = 0;
 				}
 			}
 		}
 		// clear the sequence and set the defaults
-		this->SequenceQueue.QueueSize++;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses = 0;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfAcks = 0;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].SequenceNumber = SequenceNumber;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].SequenceWasSuccessful = false;
+		this->LlSequenceQueue.QueueSize++;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses = 0;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfAcks = 0;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceNumber = SequenceNumber;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceWasSuccessful = false;
 	}
 
 	// add the response expectation to the queue
-	this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].StimulationPulse[this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses].Channel = Channel;
-	this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].StimulationPulse[this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses].PackageNumber = PackageNumber;
-	this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses++;
+	this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].StimulationPulse[this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses].Channel = Channel;
+	this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].StimulationPulse[this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses].PackageNumber = PackageNumber;
+	this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses++;
 
 	// unlock the queue
-	pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
 }
 
-void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError)
+void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError)
 {
 	/*
 	 * Update the expected stimulation response with the response
 	 */
 	// lock the queue
-	pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 
 	// search backwards for the last stimulation pulse with no ack ( and were the package number match )
 	bool DoSearch = true, PulseFound = false;
-	int16_t SequenceQueuePointer = this->SequenceQueue.QueueHead;
+	int16_t LlSequenceQueuePointer = this->LlSequenceQueue.QueueHead;
 	uint8_t PulsePointer = 0;
 
 	while(DoSearch){
 		// is this sequence complete?
 		/*
-		if (this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfAcks != this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfPulses) {
+		if (this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfAcks != this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfPulses) {
 			// no -> so this ACK must be for the first pulse without an ack, which is the pulse NumberOfAcks because of the 0 index
-			PulsePointer = this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfAcks;
+			PulsePointer = this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfAcks;
 			DoSearch = false;
 			PulseFound = true;
 		}
 		*/
-		for (uint8_t i = 0; i < this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfPulses; i++){
-			if ( this->SequenceQueue.Queue[SequenceQueuePointer].StimulationPulse[i].PackageNumber == PackageNumber){
+		for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfPulses; i++){
+			if ( this->LlSequenceQueue.Queue[LlSequenceQueuePointer].StimulationPulse[i].PackageNumber == PackageNumber){
 				// the package number match -> this is the pulse we got a response for
 				PulsePointer = i;
 				DoSearch = false;
@@ -2544,11 +2544,11 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 
 		if (DoSearch){
 			// the pulse was not found in the last sequence -> look in the sequence before
-			SequenceQueuePointer--;
-			if (SequenceQueuePointer < 0){
-				SequenceQueuePointer = REHAMOVE_SEQUENCE_QUEUE_SIZE;
+			LlSequenceQueuePointer--;
+			if (LlSequenceQueuePointer < 0){
+				LlSequenceQueuePointer = REHAMOVE_SEQUENCE_QUEUE_SIZE;
 			}
-			if (SequenceQueuePointer < this->SequenceQueue.QueueTail) {
+			if (LlSequenceQueuePointer < this->LlSequenceQueue.QueueTail) {
 				// queue end is reached and no pulse was found -> this should not happen ...
 				RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The received acknowledgement for a stimulation pulse could not be found in the sequence queue!\n     -> Package Number: %d\n     -> Result: %s\n     -> Channel Error: %d\n",
 					this->DeviceIDClass, PackageNumber, RehaMove3::GetResultString(Result), ChannelError);
@@ -2559,8 +2559,8 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 
 	// update the found pulse
 	if (PulseFound){
-		this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfAcks++;
-		this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[PulsePointer].Result = (uint8_t)Result;
+		this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks++;
+		this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[PulsePointer].Result = (uint8_t)Result;
 		// check the result
 		switch (Result){
 		case Smpt_Result_Successful:
@@ -2573,19 +2573,19 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 			this->Stats.StimultionPulsesFailed_StimError++;
 			break;
 		default:
-			RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutChannelResponse'\n", this->DeviceIDClass, Result);
+			RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutLLChannelResponse'\n", this->DeviceIDClass, Result);
 		}
 
 		// was this the last pulse of this sequence?
-		if (this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfAcks == this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfPulses){
+		if (this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks == this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfPulses){
 			bool SequenceWasSuccessful = true, StimErrorsOccurred = false;
 			char ErrorString[1000], tempString[150];
 			memset(ErrorString, 0, sizeof(ErrorString));
 
 			// make sure every pulse within the sequence was successful
-			for (uint8_t i = 0; i < this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfAcks; i++) {
+			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks; i++) {
 
-				switch (this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[i].Result){
+				switch (this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Result){
 				case Smpt_Result_Successful:
 					// stimulation pulse was successful -> end now
 					//this->Stats.StimultionPulsesSuccessful++;
@@ -2597,7 +2597,7 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 					//this->Stats.StimultionPulsesFailed++;
 					//this->Stats.StimultionPulsesFailed_StimError++;
 					snprintf(tempString, sizeof(tempString), "   -> Electrode Error => Pulse Number: %d; Channel: %d (%s)\n",
-							(i+1), ((int8_t)this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[i].Channel+1), RehaMove3::GetChannelNameString((Smpt_Channel)this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[i].Channel));
+							(i+1), ((int8_t)this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Channel+1), RehaMove3::GetChannelNameString((Smpt_Channel)this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Channel));
 					strcat(ErrorString, tempString);
 					break;
 
@@ -2605,7 +2605,7 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 					SequenceWasSuccessful = false;
 					snprintf(ErrorString, sizeof(ErrorString), "%s     -> UNDEFINED Error => Pulse Number: %d; Channel: %d (%s) Result: %d\n",
 							ErrorString, (PulsePointer+1), ((int8_t)ChannelError+1), RehaMove3::GetChannelNameString(ChannelError), Result);
-					RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutChannelResponse'\n", this->DeviceIDClass, Result);
+					RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutLLChannelResponse'\n", this->DeviceIDClass, Result);
 				}
 
 			} // end for loop
@@ -2613,11 +2613,11 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 			if (SequenceWasSuccessful){
 				// no error occurred
 				this->Stats.SequencesSuccessful++;
-				this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].SequenceWasSuccessful = true;
+				this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].SequenceWasSuccessful = true;
 			} else {
 				// an error occurred
 				RehaMove3::printMessage(printMSG_rmSequenceError, "\n%s Sequence Error: Sequence %ld FAILED! (time=%fs)\n%s",
-					this->DeviceIDClass, this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].SequenceNumber, RehaMove3::GetCurrentTime(true), ErrorString );
+					this->DeviceIDClass, this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].SequenceNumber, RehaMove3::GetCurrentTime(true), ErrorString );
 				this->Stats.SequencesFailed++;
 
 				/*
@@ -2647,7 +2647,7 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 	}
 
 	// unlock the queue
-	pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
 }
 
 void RehaMove3::PutMlCurrentState(Smpt_ml_get_current_data_ack *State, bool StimActive)

@@ -381,17 +381,17 @@ private:
 		Smpt_ack Ack;
 		bool Error;
 		char ErrorDescription[REHAMOVE_RESPONSE_ERROR_DESC_SIZE];
-	} Queue[REHAMOVE_RESPONSE_QUEUE_SIZE];
+	};
     struct ResponseQueue_t {
-    	SingleResponse_t Queue[REHAMOVE_RESPONSE_QUEUE_SIZE];
+		SingleResponse_t Queue[REHAMOVE_RESPONSE_QUEUE_SIZE];
         uint8_t		  	 QueueHead;
         uint8_t			 QueueTail;
     } ResponseQueue;
     pthread_mutex_t ResponseQueueLock_mutex;
 
-    struct SequenceQueue_t {
-    	struct StimulationSequence_t {
-    		struct SingleStimulationPulse_t {
+    struct LlSequenceQueue_t {
+    	struct LlStimulationSequence_t {
+    		struct LlSingleStimulationPulse_t {
     			uint8_t Channel;
     			uint8_t PackageNumber;
     			uint8_t Result;
@@ -405,8 +405,8 @@ private:
     	uint8_t			QueueTail;
     	uint8_t			QueueSize;
     	bool 			DoNotReportUnclaimedSequenceResults;
-    } SequenceQueue;
-    pthread_mutex_t SequenceQueueLock_mutex;
+    } LlSequenceQueue;
+    pthread_mutex_t LlSequenceQueueLock_mutex;
 
     struct DeviceStatistic_t {
     	// inputs
@@ -440,10 +440,10 @@ private:
 	void 	 PutResponse(SingleResponse_t *Response);
 	int 	 GetResponse(Smpt_Cmd ExpectedCommand, bool DoIncreaseAckCounter, int MilliSecondsToWait);
 
-	void 	 PutChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber);
-	void 	 PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError);
-
+	void 	 PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber);
+	void 	 PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError);
 	void	 PutMlCurrentState(Smpt_ml_get_current_data_ack *State, bool MlStimActive);
+
 	bool 	 CheckSupportedVersion(const uint8_t SupportedVersions[][3], Smpt_version *DeviceVersion, bool disablePedanticVersionCheck, bool *printWarning, bool *printError);
 	bool 	 CheckChannel(uint8_t ChannelIn);
 	uint16_t CheckAndCorrectPulsewidth(int Pulse_Width_IN, bool *Corrected);

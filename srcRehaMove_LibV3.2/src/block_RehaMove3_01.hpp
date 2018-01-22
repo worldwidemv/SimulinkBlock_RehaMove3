@@ -48,6 +48,21 @@ void lctRM3_Deinitialise(void **work1);
 // External declaration for class instance global storage
 class block_RehaMove3 {
 public:
+	enum BlockReturnCode_t {
+		blockReturn_initialisationSuccessful = 1,
+		blockError_stimulationFailed=  0,
+		blockError_notInitialised	= -1,
+		blockError_openingDevice	= -2,
+		blockError_getDeviceInfo	= -3,
+		blockError_checkDeviceIDs   = -4,
+		blockError_initFailed       = -5,
+		blockError_initLL           = -6,
+		blockError_initML			= -7,
+		blockError_initAborted		= -10,
+		blockError_customPF_ChannelMismatch	= -20,
+		blockError_unknownProtocol	= -21
+	};
+
 	//public variables
 	RehaMove3 *Device;
 

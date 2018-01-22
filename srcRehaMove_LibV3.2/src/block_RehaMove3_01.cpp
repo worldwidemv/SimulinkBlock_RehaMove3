@@ -86,16 +86,16 @@ void lctRM3_Initialise(  void **work1, uint16_t stimOptions[], uint16_t sizeStim
 				printf("%s Error: Initialisation failed!\n\n", bRehaMove3->stimOptions.blockID);
 			}
 			bRehaMove3->rmStatus.deviceIsInitialised = false;
-			bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_notInitialised;
+			bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockError_notInitialised;
 			// take care of specific errors
 			switch(bRehaMove3->rmResult.errorCode){
 			case actionError_openingDevice:
 				bRehaMove3->rmStatus.deviceOpeningFailed = true;
-				bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_openingDevice;
+				bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockError_openingDevice;
 				break;
 			case actionError_checkDeviceIDs:
 				bRehaMove3->rmStatus.deviceIDsDidNotMatch = true;
-				bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_checkDeviceIDs;
+				bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockError_checkDeviceIDs;
 				break;
 			default:;
 			}
@@ -116,8 +116,8 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 	double *currentIn 	= u2;
 
 	if (bRehaMove3->rmStatus.deviceInitialisationAborted){
-		y1[0] = -2; // stimulator is NOT initialised and initialisation was aborted
-		y1[1] = 0;
+		y1[0] = (double)block_RehaMove3::blockError_initAborted; // stimulator is NOT initialised and initialisation was aborted
+		y1[1] = 0.0;
 		return;
 	}
 
@@ -143,7 +143,7 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 			y1[0] = bRehaMove3->rmStatus.stimStatus1;
 			y1[1] = 0.0;	// no errors during pulse generation
 		} else {
-			y1[0] =  0.0; 	// mark this as error
+			y1[0] = (double)block_RehaMove3::blockError_stimulationFailed; 	// mark this as error
 			y1[1] = (double)PulseErrors;
 		}
 
@@ -189,7 +189,7 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 				// check that the channel IDs from PW and Cur match
 				if ( (((uint8_t)pwIn[iCh*nPoints +0]) != bRehaMove3->stimOptions.channelsActive[iCh]) || (((uint8_t)currentIn[iCh*nPoints +0]) != bRehaMove3->stimOptions.channelsActive[iCh]) ){
 					// the channel IDs do not match -> mark this at the status outputs and go to the next channel
-					y1[0] = -100.0;
+					y1[0] = (double)block_RehaMove3::blockError_customPF_ChannelMismatch;
 					y1[1] = iCh+1;
 					continue;
 				}
@@ -249,6 +249,8 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 			} else {
 				bRehaMove3->rmStatus.outputCounter++;
 			}
+			y1[0] = (double)block_RehaMove3::blockError_unknownProtocol;
+			y1[1] = 0.0;
 		}
 
 	} else {
@@ -256,7 +258,7 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 		if (bRehaMove3->Device->IsDeviceInitialised(&bRehaMove3->rmResult)) {
 			// the initialisation was successful
 			bRehaMove3->rmStatus.deviceIsInitialised = true;
-			bRehaMove3->rmStatus.stimStatus1 = 1;
+			bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockReturn_initialisationSuccessful;
 		} else {
 			// the initialisation failed
 			if (bRehaMove3->rmResult.finished && (bRehaMove3->rmStatus.outputCounter  >= bRehaMove3->rmStatus.outputCounterNext)){
@@ -267,23 +269,22 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 				bRehaMove3->rmStatus.outputCounter++;
 			}
 			bRehaMove3->rmStatus.deviceIsInitialised = false;
-			bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_notInitialised;
+			bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockError_notInitialised;
 			// take care of specific errors
 			switch(bRehaMove3->rmResult.errorCode){
 			case actionError_openingDevice:
 				bRehaMove3->rmStatus.deviceOpeningFailed = true;
-				bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_openingDevice;
+				bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockError_openingDevice;
 				break;
 			case actionError_checkDeviceIDs:
 				bRehaMove3->rmStatus.deviceIDsDidNotMatch = true;
-				bRehaMove3->rmStatus.stimStatus1 = -1.0*(double)actionError_checkDeviceIDs;
+				bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockError_checkDeviceIDs;
 				break;
 			default:;
 			}
 		}
-		y1[0] = -1; // stimulator is NOT initialised
+		y1[0] = (double)block_RehaMove3::blockError_notInitialised; // stimulator is NOT initialised
 		y1[1] = 0;
-		y1[2] = 0;
 	}
 #endif
 
