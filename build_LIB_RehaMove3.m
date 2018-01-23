@@ -31,8 +31,8 @@ libName = 'RehaMove';
 def = legacy_code('initialize');
 def.SFunctionName = 'sfunc_RehaMove3_01';
 %sfunc_RehaMove3_XX
-def.StartFcnSpec  =    'void lctRM3_Initialise( void **work1, uint16 p1[], uint16 size(p1,1), uint16 p2[], uint16 size(p2,1), uint16 p3[], uint16 size(p3,1), uint16 p4[], uint16 size(p4,1), uint16 p5, uint16 p6, double p7 )';
-def.OutputFcnSpec =    'void lctRM3_InputOutput( void **work1, double u1[p5][p6], double u2[p5][p6], double y1[3] )';
+def.StartFcnSpec  =    'void lctRM3_Initialise( void **work1, uint16 p1[], uint16 size(p1,1), uint16 p2[], uint16 size(p2,1), double p3[], uint16 size(p3,1), uint16 p4[], uint16 size(p4,1), uint16 p5, uint16 p6, uint16 p7, double p8 )';
+def.OutputFcnSpec =    'void lctRM3_InputOutput( void **work1, double u1[p6][p5], double u2[p7][p5], double y1[2] )';
 def.TerminateFcnSpec = 'void lctRM3_Deinitialise( void **work1 )';
 def.IncPaths     = {fullfile(pwd, 'srcRehaMove_LibV3.2', 'src'), fullfile(pwd, 'incRehaMove_LibV3.2_lin_x86_64', 'include', 'general'), fullfile(pwd, 'incRehaMove_LibV3.2_lin_x86_64', 'include', 'low-level'), fullfile(pwd, 'incRehaMove_LibV3.2_lin_x86_64', 'include', 'mid-level')};
 def.SrcPaths     = {fullfile(pwd, 'srcRehaMove_LibV3.2', 'src')};

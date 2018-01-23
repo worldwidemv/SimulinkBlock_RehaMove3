@@ -16,16 +16,16 @@ tabStim = {'on','on','on','on','on','on','on','on','off','off','on','on','on','o
 switch get_param(gcb, 'stimRehaMoveProProtocol')
     case 'Use the LowLevel protocol   -> Each stimulation pulse is send separatly.'
         tabLowLevel = { 'on','off','on','off' };
-        tabMidLevel = { 'off' };
+        tabMidLevel = { 'off', 'off', 'off', 'off', 'off', 'off', 'off' };
     case 'Use the LowLevel protocol and use the user provieded pulse configs.'
         tabLowLevel = { 'off','on','on','off' };
-        tabMidLevel = { 'off' };
+        tabMidLevel = { 'off', 'off', 'off', 'off', 'off', 'off', 'off' };
     case 'Use the MidLevel protocol   -> Only stimulation pulse updates are send.'
         tabLowLevel = { 'off','off','off','off' };
-        tabMidLevel = { 'on' };
+        tabMidLevel = { 'on', 'on', 'on', 'on', 'on', 'on', 'on' };
     otherwise
         tabLowLevel = { 'off','off','off','off' };
-        tabMidLevel = { 'off' };
+        tabMidLevel = { 'off', 'off', 'off', 'off', 'off', 'off', 'off' };
         warning(['Unknown protocol: "', get_param(gcb, 'stimRehaMoveProProtocol'),'"']);
 end
 

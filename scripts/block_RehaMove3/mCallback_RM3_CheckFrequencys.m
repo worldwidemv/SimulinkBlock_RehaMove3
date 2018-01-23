@@ -14,9 +14,9 @@ function  mCallback_RM3_CheckFrequencys( )
 %% check the input value
 SampleTimeStrOld = get_param(gcb, 'SampleTime');
 stimFrequency = evalin('caller', get_param(gcb, 'stimFrequency'));
-if (stimFrequency < 5)
-    stimFrequency = 5;
-    errordlg('The stimulation frequency must not deceed 5 Hz!','Stimulation Frequency Config Error');
+if (stimFrequency < 1)
+    stimFrequency = 1;
+    errordlg('The stimulation frequency must not deceed 1 Hz!','Stimulation Frequency Config Error');
     set_param(gcb, 'stimFrequency', num2str(stimFrequency));
 end
 if (stimFrequency > 100)

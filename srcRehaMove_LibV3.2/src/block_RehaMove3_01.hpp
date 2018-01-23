@@ -40,7 +40,7 @@ using namespace nsRehaMove3_SMPT_32X_01;
 
 
 //sfunc_RehaMove3_XX
-void lctRM3_Initialise(  void **work1, uint16_t stimOptions[], uint16_t sizeStimOptions, uint16_t llOptions[], uint16_t sizeLlOptions, uint16_t mlOptions[], uint16_t sizeMlOptions, uint16_t miscOptions[], uint16_t sizeMiscOptions, uint16_t inputSize1, uint16_t inputSize2, double sampleTime);
+void lctRM3_Initialise(  void **work1, uint16_t stimOptions[], uint16_t sizeStimOptions, uint16_t llOptions[], uint16_t sizeLlOptions, double mlOptions[], uint16_t sizeMlOptions, uint16_t miscOptions[], uint16_t sizeMiscOptions, uint16_t inputSize1, uint16_t inputSize2_1, uint16_t inputSize2_2, double sampleTime );
 void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[]);
 void lctRM3_Deinitialise(void **work1);
 
@@ -48,14 +48,26 @@ void lctRM3_Deinitialise(void **work1);
 // External declaration for class instance global storage
 class block_RehaMove3 {
 public:
-	union convert64_t {
-		double input;
-		uint64_t output;
+	enum BlockReturnCode_t {
+		blockReturn_initialisationSuccessful = 1,
+		blockError_stimulationFailed=  0,
+		blockError_notInitialised	= -1,
+		blockError_openingDevice	= -2,
+		blockError_getDeviceInfo	= -3,
+		blockError_checkDeviceIDs   = -4,
+		blockError_initFailed       = -5,
+		blockError_initLL           = -6,
+		blockError_initML			= -7,
+		blockError_initAborted		= -10,
+		blockError_customPF_ChannelMismatch	= -20,
+		blockError_unknownProtocol	= -21
 	};
+
 	//public variables
 	RehaMove3 *Device;
 
-	struct rmpStatus_t {
+	struct rmStatus_t {
+		bool deviceInitialisationAborted;
 		bool deviceIsInitialised;
 		//
 		bool deviceOpeningFailed;
@@ -64,10 +76,10 @@ public:
 		double	stimStatus1;
 		uint32_t outputCounter;
 		uint32_t outputCounterNext;
-	} rmpStatus;
+	} rmStatus;
 
 	// stimOptions = [size(stimDeviceID,2), uint8(stimDeviceID), size(stimDevicePath,2), uint8(stimDevicePath),
-	// size(stimChannels,2), uint8(stimChannels), stimFrequency, stimRMPProtocol, stimMaxCurrent, stimMaxPulsWidth];
+	// size(stimChannels,2), uint8(stimChannels), stimFrequency, stimRMrotocol, stimMaxCurrent, stimMaxPulsWidth];
 	struct stimOptions_t{
 		char    blockID[RM3_STRING_SIZE_MAX];
 		char    deviceID[RM3_STRING_SIZE_MAX];
@@ -75,7 +87,7 @@ public:
 		uint8_t numberOfActiveChannels;
 		uint8_t channelsActive[RM3_N_PULSES_MAX];
 		uint8_t stimFrequency;
-		uint8_t rmpProtocol;
+		uint8_t rmProtocol;
 		float	maxCurrent;
 		uint16_t maxPulseWidth;
 		uint16_t errorAbortAfter;
@@ -91,28 +103,37 @@ public:
 		uint8_t	maxStimVoltage;
 		uint8_t useDenervation;
 	} llOptions;
+	// mlOptions = [ double(mlFStim), mlFStimDynamic, mlUseSoftStart, mlUseRamps, mlRampsUpdates, mlRampsZeroUpdates ];
 	struct mlOptions_t{
-
-
+		double fStimML;
+		bool   useDynamicStimulationFrequncy;
+		bool   useSoftStart;
+		bool   useRamps;
+		double rampsUpdates;
+		double rampsZeroUpdates;
+		double nKeepAlive;
 	} mlOptions;
-	// miscOptions= [uint8(miscPrintBlockParam), miscPrintDeviceInfos, miscPrintInitInfos, miscPrintRMPInitSettings,
+	// miscOptions= [uint8(miscPrintBlockParam), miscPrintDeviceInfos, miscPrintInitInfos, miscPrintRMInitSettings,
 	// miscPrintSendInfos, miscPrintReceiveInfos, miscPrintStimInfos, miscPrintSequenceErrors,
 	// miscPrintCorrectionChargeWarnings, miscPrintStats, miscUseColors,   miscEnableAdvancedSettings, miscDisableVersionCheck];
 	struct miscOptions_t{
 		bool debugPrintBlockParameter;
-		RehaMove3::rmpDebugSettings_t debug;
+		RehaMove3::rmDebugSettings_t debug;
 		bool enableAdvancedSettings;
 		bool disableVersionCheck;
 	} miscOptions;
 	struct io_size_t {
 		uint16_t sizeStimIn1;
-		uint16_t sizeStimIn2;
+		uint16_t sizeStimIn2_1;
+		uint16_t sizeStimIn2_2;
 	} ioSize;
 	double sampleTime;
 
-	actionResult_t		rmpResult;
-	RehaMove3::rmpInitSettings_t rmpInitSettings;
-	SequenceConfig_t	SequenceConfig;
+	RehaMove3::actionResult_t 			rmResult;
+	RehaMove3::rmInitSettings_t 		rmInitSettings;
+	RehaMove3::LlSequenceConfig_t		LlSequenceConfig;
+	RehaMove3::CustomLlSequenceConfig_t	LlCustomSequenceConfig;
+	RehaMove3::MlUpdateConfig_t			MlUpdateConfig;
 
 	//public functions
 	block_RehaMove3(void);
@@ -120,7 +141,7 @@ public:
 
 	void	TransverStimOptions(uint16_t *parameter, uint16_t parameterSize);
 	void	TransverLlOptions(uint16_t *parameter, uint16_t parameterSize);
-	void	TransverMlOptions(uint16_t *parameter, uint16_t parameterSize);
+	void	TransverMlOptions(double *parameter, uint16_t parameterSize);
 	void	TransverMiscOptions(uint16_t *parameter, uint16_t parameterSize, bool printDebugInfo);
 
 private:

@@ -21,7 +21,6 @@
 
 
 #include <RehaMove3Interface_SMPT32X.hpp>
-#include <termios.h>  // TODO remove once the fix for close_serial delay is implemented -> https://ti1.control.tu-berlin.de/redmine/issues/273
 
 
 namespace nsRehaMove3_SMPT_32X_01 {
@@ -74,27 +73,27 @@ RehaMove3::RehaMove3(const char *DeviceID, const char *SerialDeviceFile)
 		// the device filename could not be set up correctly, so opening the device will probably fail anyway -> return
 		return;
 	}
-	memset(&this->rmpStatus, 0, sizeof(rmpStatus_t));
+	memset(&this->rmStatus, 0, sizeof(rmStatus_t));
 
 	// Setup specific initialisations
-	memset(&(this->rmpSettings), 0, sizeof(this->rmpSettings));
-	memset(&(this->rmpInitResult), 0, sizeof(this->rmpInitResult));
-	this->rmpInitResultExtern = &this->rmpInitResult;
+	memset(&(this->rmSettings), 0, sizeof(this->rmSettings));
+	memset(&(this->rmInitResult), 0, sizeof(this->rmInitResult));
+	this->rmInitResultExtern = &this->rmInitResult;
 	// Status specific initialisations
 
-	// TODO Global structs init
 	// Statistic specific initialisations
 	memset(&(this->Stats), 0, sizeof(this->Stats));
+	memset(&(this->Acks), 0, sizeof(this->Acks));
 
 	this->InitThread = 0;
 	this->ReceiverThread = 0;
 	pthread_mutex_init(&this->ReadPackage_mutex, NULL);
 	pthread_mutex_init(&this->AcksLock_mutex, NULL);
 	pthread_mutex_init(&this->ResponseQueueLock_mutex, NULL);
-	pthread_mutex_init(&this->SequenceQueueLock_mutex, NULL);
+	pthread_mutex_init(&this->LlSequenceQueueLock_mutex, NULL);
 
 	// the initialisation of the class instance is done
-	this->ClassInstanceInitialised = true; // todo: abragen ob initialisiert
+	this->ClassInstanceInitialised = true;
 
 	/*
 	 * Set up SMPT print function to use
@@ -103,12 +102,12 @@ RehaMove3::RehaMove3(const char *DeviceID, const char *SerialDeviceFile)
 }
 
 RehaMove3::~RehaMove3(void) {
-	if (this->rmpStatus.DeviceIsOpen) {
-		while(this->rmpStatus.InitThreatRunning){
-			this->rmpStatus.InitThreatActive  = false;
+	if (this->rmStatus.DeviceIsOpen) {
+		while(this->rmStatus.InitThreatRunning){
+			this->rmStatus.InitThreatActive  = false;
 			usleep(100000); // 100ms
 		}
-		RehaMove3::printMessage(printMSG_rmpDeviceInfo, "RehaMove3 DEBUG: Closing serial interface\n");
+		RehaMove3::printMessage(printMSG_rmDeviceInfo, "RehaMove3 DEBUG: Closing serial interface\n");
 		RehaMove3::CloseSerial();
 	}
 
@@ -116,16 +115,16 @@ RehaMove3::~RehaMove3(void) {
 	pthread_mutex_destroy(&this->ReadPackage_mutex);
 	pthread_mutex_destroy(&this->AcksLock_mutex);
 	pthread_mutex_destroy(&this->ResponseQueueLock_mutex);
-	pthread_mutex_destroy(&this->SequenceQueueLock_mutex);
+	pthread_mutex_destroy(&this->LlSequenceQueueLock_mutex);
 }
 
 bool RehaMove3::IsDeviceInitialised(actionResult_t *InitResult) {
-	memcpy(InitResult, &this->rmpInitResult, sizeof(this->rmpInitResult));
-	return this->rmpStatus.DeviceInitialised;
+	memcpy(InitResult, &this->rmInitResult, sizeof(this->rmInitResult));
+	return this->rmStatus.DeviceInitialised;
 }
 
 
-bool RehaMove3::InitialiseRehaMove3(rmpInitSettings_t *InitSetup, actionResult_t *InitResult)
+bool RehaMove3::InitialiseRehaMove3(rmInitSettings_t *InitSetup, actionResult_t *InitResult)
 {
 	// Check if the class was successfully created
 	if (!this->ClassInstanceInitialised){
@@ -139,7 +138,7 @@ bool RehaMove3::InitialiseRehaMove3(rmpInitSettings_t *InitSetup, actionResult_t
 		return false;
 	}
 	// Check that the thread is not already running
-	if (this->rmpStatus.InitThreatRunning) {
+	if (this->rmStatus.InitThreatRunning) {
 		// thread is running
 		RehaMove3::printMessage(printMSG_error, "%s Error: The initialisation thread is already running!\n", this->DeviceIDClass);
 		return false;
@@ -148,17 +147,17 @@ bool RehaMove3::InitialiseRehaMove3(rmpInitSettings_t *InitSetup, actionResult_t
 	// Check the SMPT library version
 	Smpt_version SMPT_Version = smpt_library_version();
 	bool printWarning = false, printError = false;
-	if (!RehaMove3::CheckSupportedVersion(RMP_SupportedVersionsSMPT, &SMPT_Version, false, &printWarning, &printError)){
+	if (!RehaMove3::CheckSupportedVersion(RM3_SupportedVersionsSMPT, &SMPT_Version, false, &printWarning, &printError)){
 		char versionString[100] = {};
 		if (printWarning && !printError){
 			// show a warning about the unsupported firmware version
-			RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsSMPT);
+			RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsSMPT);
 			RehaMove3::printMessage(printMSG_warning, "%s Warning: The version of the SMPT library is probably not fully supported!\n   -> Supported Versions: %s\n   -> Version of the linked library: %u.%u.%u\n",
 					this->DeviceIDClass, versionString, SMPT_Version.major, SMPT_Version.minor, SMPT_Version.revision);
 		}
 		if (printError){
 			// show an error about the unsupported firmware version and stop the initialisation
-			RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsMain);
+			RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsMain);
 			RehaMove3::printMessage(printMSG_error, "%s Warning: The version of the SMPT library is not supported!\n   -> Supported Versions: %s\n   -> Version of the linked library: %u.%u.%u\n   -> The initialisation will be aborted!",
 					this->DeviceIDClass, versionString, SMPT_Version.major, SMPT_Version.minor, SMPT_Version.revision);
 			return false;
@@ -166,38 +165,38 @@ bool RehaMove3::InitialiseRehaMove3(rmpInitSettings_t *InitSetup, actionResult_t
 	}
 
 	// Save the init struct
-	memcpy(&(this->rmpInitSettings), InitSetup, sizeof(this->rmpInitSettings));
+	memcpy(&(this->rmInitSettings), InitSetup, sizeof(this->rmInitSettings));
 
 	// update the settings
-	this->rmpSettings.StimFrequency 	 = InitSetup->StimConfig.StimFrequency;
-	this->rmpSettings.NumberOfErrorsAfterWhichToAbort 			  = InitSetup->StimConfig.ErrorAbortAfter;
-	this->rmpSettings.NumberOfSequencesAfterWhichToRetestForError = InitSetup->StimConfig.ErrorRetestAfter;
-	this->rmpSettings.MaxPulseWidth 	 = InitSetup->StimConfig.PulseWidthMax;
-	this->rmpSettings.MaxCurrent     	 = fabsf(InitSetup->StimConfig.CurrentMax);
-	this->rmpSettings.UseThreadForInit   = InitSetup->StimConfig.UseThreadForInit;
-	this->rmpSettings.UseThreadForAcks   = InitSetup->StimConfig.UseThreadForAcks;
+	this->rmSettings.StimFrequency 	 = InitSetup->StimConfig.StimFrequency;
+	this->rmSettings.NumberOfErrorsAfterWhichToAbort 			  = InitSetup->StimConfig.ErrorAbortAfter;
+	this->rmSettings.NumberOfSequencesAfterWhichToRetestForError = InitSetup->StimConfig.ErrorRetestAfter;
+	this->rmSettings.MaxPulseWidth 	 = InitSetup->StimConfig.PulseWidthMax;
+	this->rmSettings.MaxCurrent     	 = fabsf(InitSetup->StimConfig.CurrentMax);
+	this->rmSettings.UseThreadForInit   = InitSetup->StimConfig.UseThreadForInit;
+	this->rmSettings.UseThreadForAcks   = InitSetup->StimConfig.UseThreadForAcks;
 
 	// save the current time as offset
 	struct timeval time;
 	gettimeofday(&time,NULL);
-	this->rmpStatus.StartTime_ms = (uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0);
+	this->rmStatus.StartTime_ms = (uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0);
 
 	// use a thread for the initialisation?
 	bool returnValue = false;
-	this->rmpInitResultExtern = InitResult;
-	if (this->rmpSettings.UseThreadForInit){
-		this->rmpStatus.InitThreatActive = true;
+	this->rmInitResultExtern = InitResult;
+	if (this->rmSettings.UseThreadForInit){
+		this->rmStatus.InitThreatActive = true;
 		if (pthread_create(&(this->InitThread), NULL, InitialisationThreadFunc, (void *)this) != 0) {
 			RehaMove3::printMessage(printMSG_error, "%s Error: The initialisation threat could not be started:\n     -> %s (%d)\n", this->DeviceIDClass, strerror(errno), errno);
 			returnValue = RehaMove3::InitialiseDevice();
-			memcpy(InitResult, &this->rmpInitResult, sizeof(this->rmpInitResult));
+			memcpy(InitResult, &this->rmInitResult, sizeof(this->rmInitResult));
 			return returnValue;
 		}
-		RehaMove3::printMessage(printMSG_rmpDeviceInfo, "RehaMove3 DEBUG: Starting the initialisation threat was successfully.\n");
+		RehaMove3::printMessage(printMSG_rmDeviceInfo, "RehaMove3 DEBUG: Starting the initialisation threat was successfully.\n");
 	} else {
-		this->rmpStatus.InitThreatActive = true;
+		this->rmStatus.InitThreatActive = true;
 		returnValue = RehaMove3::InitialiseDevice();
-		memcpy(InitResult, &this->rmpInitResult, sizeof(this->rmpInitResult));
+		memcpy(InitResult, &this->rmInitResult, sizeof(this->rmInitResult));
 		return returnValue;
 	}
 	return false;
@@ -205,10 +204,10 @@ bool RehaMove3::InitialiseRehaMove3(rmpInitSettings_t *InitSetup, actionResult_t
 
 bool RehaMove3::InitialiseDevice(void)
 {
-	if (!this->rmpStatus.InitThreatActive){
+	if (!this->rmStatus.InitThreatActive){
 		return false;
 	}
-	this->rmpStatus.InitThreatRunning = true;
+	this->rmStatus.InitThreatRunning = true;
 	/*
 	 * open the device and start the receiver threat
 	 */
@@ -241,7 +240,7 @@ bool RehaMove3::InitialiseDevice(void)
 							break;
 						}
 						// check if the initialise thread should still be running
-						if (!this->rmpStatus.InitThreatActive){
+						if (!this->rmStatus.InitThreatActive){
 							RehaMove3::AbortDeviceInitialisation();
 							return false;
 						}
@@ -260,7 +259,7 @@ bool RehaMove3::InitialiseDevice(void)
 		}
 
 		// check if the initialise thread should still be running
-		if (!this->rmpStatus.InitThreatActive){
+		if (!this->rmStatus.InitThreatActive){
 			RehaMove3::AbortDeviceInitialisation();
 			return false;
 		}
@@ -277,16 +276,16 @@ bool RehaMove3::InitialiseDevice(void)
 				continue;
 			} else {
 				// response received -> check the ID
-				memcpy(this->rmpStatus.Device.DeviceID, this->Acks.G_device_id_ack.device_id, (size_t)Smpt_Length_Device_Id);
-				this->rmpStatus.Device.DeviceID[Smpt_Length_Device_Id] = 0x00;
-				if (this->rmpInitSettings.checkDeviceIDs){
+				memcpy(this->rmStatus.Device.DeviceID, this->Acks.G_device_id_ack.device_id, (size_t)Smpt_Length_Device_Id);
+				this->rmStatus.Device.DeviceID[Smpt_Length_Device_Id] = 0x00;
+				if (this->rmInitSettings.checkDeviceIDs){
 					// check if the device IDs match
-					if (strcmp(this->rmpInitSettings.RequestedDeviceID, this->rmpStatus.Device.DeviceID) != 0){
+					if (strcmp(this->rmInitSettings.RequestedDeviceID, this->rmStatus.Device.DeviceID) != 0){
 						// IDs do not match
-						this->rmpInitResult.successful = false;
-						this->rmpInitResult.errorCode = actionError_checkDeviceIDs;
-						sprintf(this->rmpInitResult.errorMessage, "The serial numbers do not match\n.     -> Requested SN: '%s';  Found SN: '%s'!\n", this->rmpInitSettings.RequestedDeviceID, this->rmpStatus.Device.DeviceID);
-						RehaMove3::printMessage(printMSG_error, "%s Error: The serial numbers do not match\n   -> Requested SN: '%s';  Found SN: '%s'!\n", this->DeviceIDClass, this->rmpInitSettings.RequestedDeviceID, this->rmpStatus.Device.DeviceID);
+						this->rmInitResult.successful = false;
+						this->rmInitResult.errorCode = actionError_checkDeviceIDs;
+						sprintf(this->rmInitResult.errorMessage, "The serial numbers do not match\n.     -> Requested SN: '%s';  Found SN: '%s'!\n", this->rmInitSettings.RequestedDeviceID, this->rmStatus.Device.DeviceID);
+						RehaMove3::printMessage(printMSG_error, "%s Error: The serial numbers do not match\n   -> Requested SN: '%s';  Found SN: '%s'!\n", this->DeviceIDClass, this->rmInitSettings.RequestedDeviceID, this->rmStatus.Device.DeviceID);
 						RehaMove3::AbortDeviceInitialisation();
 						return false;
 					}
@@ -322,41 +321,41 @@ bool RehaMove3::InitialiseDevice(void)
 				continue;
 			} else {
 				// response received -> get the firmware version
-				memcpy(&(this->rmpStatus.Device.MainVersion), &(this->Acks.G_version_ack.uc_version), sizeof(Smpt_uc_version));
+				memcpy(&(this->rmStatus.Device.MainVersion), &(this->Acks.G_version_ack.uc_version), sizeof(Smpt_uc_version));
 				// test if the device version is supported
 				// main firmware version
-				if (!RehaMove3::CheckSupportedVersion(RMP_SupportedVersionsMain, &this->rmpStatus.Device.MainVersion.fw_version, this->rmpInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
+				if (!RehaMove3::CheckSupportedVersion(RM3_SupportedVersionsMain, &this->rmStatus.Device.MainVersion.fw_version, this->rmInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
 					char versionString[100] = {};
 					if (printWarning && !printError){
 						// show a warning about the unsupported firmware version
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsMain);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsMain);
 						RehaMove3::printMessage(printMSG_warning, "%s Warning: The firmware version of the 'Main MCU' is probably not fully supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.MainVersion.fw_version.major, this->rmpStatus.Device.MainVersion.fw_version.minor, this->rmpStatus.Device.MainVersion.fw_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.MainVersion.fw_version.major, this->rmStatus.Device.MainVersion.fw_version.minor, this->rmStatus.Device.MainVersion.fw_version.revision);
 					}
 					if (printError){
 						// show an error about the unsupported firmware version and stop the initialisation
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsMain);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsMain);
 						RehaMove3::printMessage(printMSG_error, "%s Error: The firmware version of the 'Main MCU' is not supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n\n   -> The initialisation will be aborted!",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.MainVersion.fw_version.major, this->rmpStatus.Device.MainVersion.fw_version.minor, this->rmpStatus.Device.MainVersion.fw_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.MainVersion.fw_version.major, this->rmStatus.Device.MainVersion.fw_version.minor, this->rmStatus.Device.MainVersion.fw_version.revision);
 						RehaMove3::AbortDeviceInitialisation();
 						return false;
 					}
 				}
 				// main SMPT version
-				if (!RehaMove3::CheckSupportedVersion(RMP_SupportedVersionsSMPT, &this->rmpStatus.Device.MainVersion.smpt_version, this->rmpInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
+				if (!RehaMove3::CheckSupportedVersion(RM3_SupportedVersionsSMPT, &this->rmStatus.Device.MainVersion.smpt_version, this->rmInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
 					char versionString[100] = {};
 					if (printWarning && !printError){
 						// show a warning about the unsupported SMPT version
 						char versionString[100] = {};
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsSMPT);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsSMPT);
 						RehaMove3::printMessage(printMSG_warning, "%s Warning: The SMPT version of the 'Main MCU' is probably not fully supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.MainVersion.smpt_version.major, this->rmpStatus.Device.MainVersion.smpt_version.minor, this->rmpStatus.Device.MainVersion.smpt_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.MainVersion.smpt_version.major, this->rmStatus.Device.MainVersion.smpt_version.minor, this->rmStatus.Device.MainVersion.smpt_version.revision);
 					}
 					if (printError){
 						// show an error about the unsupported SMPT version and stop the initialisation
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsSMPT);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsSMPT);
 						RehaMove3::printMessage(printMSG_error, "%s Error: The SMPT version of the 'Main MCU' is not supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n\n   -> The initialisation will be aborted!",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.MainVersion.smpt_version.major, this->rmpStatus.Device.MainVersion.smpt_version.minor, this->rmpStatus.Device.MainVersion.smpt_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.MainVersion.smpt_version.major, this->rmStatus.Device.MainVersion.smpt_version.minor, this->rmStatus.Device.MainVersion.smpt_version.revision);
 						RehaMove3::AbortDeviceInitialisation();
 						return false;
 					}
@@ -377,40 +376,40 @@ bool RehaMove3::InitialiseDevice(void)
 				continue;
 			} else {
 				// response received -> get the firmware version
-				memcpy(&(this->rmpStatus.Device.StimVersion), &(this->Acks.G_version_ack.uc_version), sizeof(Smpt_uc_version));
+				memcpy(&(this->rmStatus.Device.StimVersion), &(this->Acks.G_version_ack.uc_version), sizeof(Smpt_uc_version));
 				// test if the device version is supported
 				// stim firmware version
-				if (!RehaMove3::CheckSupportedVersion(RMP_SupportedVersionsStim, &this->rmpStatus.Device.StimVersion.fw_version, this->rmpInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
+				if (!RehaMove3::CheckSupportedVersion(RM3_SupportedVersionsStim, &this->rmStatus.Device.StimVersion.fw_version, this->rmInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
 					char versionString[100] = {};
 					if (printWarning && !printError){
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsStim);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsStim);
 						// show a warning about the unsupported firmware version
 						RehaMove3::printMessage(printMSG_warning, "%s Warning: The firmware version of the 'Stim MCU' is probably not fully supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.StimVersion.fw_version.major, this->rmpStatus.Device.StimVersion.fw_version.minor, this->rmpStatus.Device.StimVersion.fw_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.StimVersion.fw_version.major, this->rmStatus.Device.StimVersion.fw_version.minor, this->rmStatus.Device.StimVersion.fw_version.revision);
 					}
 					if (printError){
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsStim);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsStim);
 						// show an error about the unsupported firmware version and stop the initialisation
 						RehaMove3::printMessage(printMSG_error, "%s Error: The firmware version of the 'Stim MCU' is not supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n\n   -> The initialisation will be aborted!",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.StimVersion.fw_version.major, this->rmpStatus.Device.StimVersion.fw_version.minor, this->rmpStatus.Device.StimVersion.fw_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.StimVersion.fw_version.major, this->rmStatus.Device.StimVersion.fw_version.minor, this->rmStatus.Device.StimVersion.fw_version.revision);
 						RehaMove3::AbortDeviceInitialisation();
 						return false;
 					}
 				}
 				// stim SMPT version
-				if (!RehaMove3::CheckSupportedVersion(RMP_SupportedVersionsSMPT, &this->rmpStatus.Device.StimVersion.smpt_version, this->rmpInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
+				if (!RehaMove3::CheckSupportedVersion(RM3_SupportedVersionsSMPT, &this->rmStatus.Device.StimVersion.smpt_version, this->rmInitSettings.DebugConfig.disableVersionCheck, &printWarning, &printError)){
 					char versionString[100] = {};
 					if (printWarning && !printError){
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsSMPT);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsSMPT);
 						// show a warning about the unsupported SMPT version
 						RehaMove3::printMessage(printMSG_warning, "%s Warning: The SMPT version of the 'Stim MCU' is probably not fully supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.StimVersion.smpt_version.major, this->rmpStatus.Device.StimVersion.smpt_version.minor, this->rmpStatus.Device.StimVersion.smpt_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.StimVersion.smpt_version.major, this->rmStatus.Device.StimVersion.smpt_version.minor, this->rmStatus.Device.StimVersion.smpt_version.revision);
 					}
 					if (printError){
-						RehaMove3::printSupportedVersion(versionString, RMP_SupportedVersionsSMPT);
+						RehaMove3::printSupportedVersion(versionString, RM3_SupportedVersionsSMPT);
 						// show an error about the unsupported SMPT version and stop the initialisation
 						RehaMove3::printMessage(printMSG_error, "%s Error: The SMPT version of the 'Stim MCU' is not supported!\n   -> Supported Versions: %s\n   -> Version of the device: %u.%u.%u\n\n   -> The initialisation will be aborted!",
-								this->DeviceIDClass, versionString, this->rmpStatus.Device.StimVersion.smpt_version.major, this->rmpStatus.Device.StimVersion.smpt_version.minor, this->rmpStatus.Device.StimVersion.smpt_version.revision);
+								this->DeviceIDClass, versionString, this->rmStatus.Device.StimVersion.smpt_version.major, this->rmStatus.Device.StimVersion.smpt_version.minor, this->rmStatus.Device.StimVersion.smpt_version.revision);
 						RehaMove3::AbortDeviceInitialisation();
 						return false;
 					}
@@ -422,71 +421,123 @@ bool RehaMove3::InitialiseDevice(void)
 			return false;
 		}
 		// print the current status, in case something goes wrong
-		RehaMove3::printMessage(printMSG_rmpDeviceInfo, "%s: The stimulator '%s' was found on interface '%s'\n   -> Versions: M[%u.%u.%u|%u.%u.%u] / S[%u.%u.%u|%u.%u.%u]\n   -> Battery Voltage: %u%% (%0.2fV)\n",
-				this->DeviceIDClass, this->rmpStatus.Device.DeviceID, this->DeviceFileName,
-				this->rmpStatus.Device.MainVersion.smpt_version.major, this->rmpStatus.Device.MainVersion.smpt_version.minor, this->rmpStatus.Device.MainVersion.smpt_version.revision,
-				this->rmpStatus.Device.MainVersion.fw_version.major, this->rmpStatus.Device.MainVersion.fw_version.minor, this->rmpStatus.Device.MainVersion.fw_version.revision,
-				this->rmpStatus.Device.StimVersion.smpt_version.major, this->rmpStatus.Device.StimVersion.smpt_version.minor, this->rmpStatus.Device.StimVersion.smpt_version.revision,
-				this->rmpStatus.Device.StimVersion.fw_version.major, this->rmpStatus.Device.StimVersion.fw_version.minor, this->rmpStatus.Device.StimVersion.fw_version.revision,
-				this->rmpStatus.Device.BatteryLevel, this->rmpStatus.Device.BatteryVoltage);
+		RehaMove3::printMessage(printMSG_rmDeviceInfo, "%s: The stimulator '%s' was found on interface '%s'\n   -> Versions: M[%u.%u.%u|%u.%u.%u] / S[%u.%u.%u|%u.%u.%u]\n   -> Battery Voltage: %u%% (%0.2fV)\n",
+				this->DeviceIDClass, this->rmStatus.Device.DeviceID, this->DeviceFileName,
+				this->rmStatus.Device.MainVersion.smpt_version.major, this->rmStatus.Device.MainVersion.smpt_version.minor, this->rmStatus.Device.MainVersion.smpt_version.revision,
+				this->rmStatus.Device.MainVersion.fw_version.major, this->rmStatus.Device.MainVersion.fw_version.minor, this->rmStatus.Device.MainVersion.fw_version.revision,
+				this->rmStatus.Device.StimVersion.smpt_version.major, this->rmStatus.Device.StimVersion.smpt_version.minor, this->rmStatus.Device.StimVersion.smpt_version.revision,
+				this->rmStatus.Device.StimVersion.fw_version.major, this->rmStatus.Device.StimVersion.fw_version.minor, this->rmStatus.Device.StimVersion.fw_version.revision,
+				this->rmStatus.Device.BatteryLevel, this->rmStatus.Device.BatteryVoltage);
 
-		/*
-		 * LowLevel commands
-		 */
+		this->rmStatus.DeviceLlIsInitialised = false;
+		this->rmStatus.DeviceMlIsInitialised = false;
+		this->rmSettings.CommProtocol = this->rmInitSettings.StimConfig.rmProtocol;
+		switch(this->rmSettings.CommProtocol){
+		case REHAMOVE_MODE_LOWLEVEL_PREDEDINED:
+		case REHAMOVE_MODE_LOWLEVEL_CUSTOM:{
+			/*
+			 * LowLevel communication mode
+			 */
+			Smpt_ll_init ll_init = {0};
+			smpt_clear_ll_init(&ll_init);
 
-		// LowLevle initialisation
-		Smpt_ll_init ll_init = {0};
-		smpt_clear_ll_init(&ll_init);
+			if (this->rmInitSettings.LowLevelConfig.UseDenervation) {
+				RehaMove3::printMessage(printMSG_error, "%s Error: Stimulation of denerved muscles is not supported yet!\n", this->DeviceIDClass);
+				//this->Setup.DenervationIsUsed = true;
+				//ll_init.enable_denervation = 1;
+				this->rmInitSettings.LowLevelConfig.UseDenervation = false; // TODO: add denervation feature if available -> remove line
+				ll_init.enable_denervation = 0;
+			} else {
+				ll_init.enable_denervation = 0;
+			}
 
-		if (this->rmpInitSettings.LowLevelConfig.UseDenervation) {
-			RehaMove3::printMessage(printMSG_error, "%s Error: Stimulation of denerved muscles is not supported yet!\n", this->DeviceIDClass);
-			//this->Setup.DenervationIsUsed = true;
-			//ll_init.enable_denervation = 1;
-			this->rmpSettings.DenervationIsUsed = false; // TODO: add denervation feature if available
-			ll_init.enable_denervation = 0;
-		} else {
-			this->rmpSettings.DenervationIsUsed = false;
-			ll_init.enable_denervation = 0;
-		}
+			// set voltage level
+			ll_init.high_voltage_level = (Smpt_High_Voltage)this->rmInitSettings.LowLevelConfig.HighVoltageLevel;
 
-		// set voltage level
-		ll_init.high_voltage_level = (Smpt_High_Voltage)this->rmpInitSettings.LowLevelConfig.HighVoltageLevel;
+			// package number
+			ll_init.packet_number = RehaMove3::GetPackageNumber();
 
-		// package number
-		ll_init.packet_number = RehaMove3::GetPackageNumber();
+			// check the configuration
+			if (smpt_is_valid_ll_init(&ll_init)) {
+				// init configuration is valid
+				RehaMove3::printMessage(printMSG_rmInitParam, "%s DEBUG: Initialising the LowLevel Protocol\n", this->DeviceIDClass);
+				RehaMove3::printMessage(printMSG_rmInitParam, "     -> Denervation used: %s\n", (this->rmInitSettings.LowLevelConfig.UseDenervation ? "yes":"no"));
 
-		// check the configuration
-		if (smpt_is_valid_ll_init(&ll_init)) {
-			// init configuration is valid
-			RehaMove3::printMessage(printMSG_rmpInitParam, "%s DEBUG: Initialising the LowLevel Protocol\n", this->DeviceIDClass);
-			RehaMove3::printMessage(printMSG_rmpInitParam, "     -> Denervation used: %s\n", (this->rmpSettings.DenervationIsUsed ? "yes":"no"));
-
-			// Send the ll_init command to the stimulator
-			if (smpt_send_ll_init(&(this->Device), &ll_init)) {
-				if (RehaMove3::GetResponse(Smpt_Cmd_Ll_Init_Ack, true, 500) != Smpt_Cmd_Ll_Init_Ack) {
-					// error
-					RehaMove3::printMessage(printMSG_error, "%s Error: The device could not be initialised! The LL_Init acknowledgement is missing!\n", this->DeviceIDClass);
-					DoDeviceReset = true;
-					continue;
+				// Send the ll_init command to the stimulator
+				if (smpt_send_ll_init(&(this->Device), &ll_init)) {
+					if (RehaMove3::GetResponse(Smpt_Cmd_Ll_Init_Ack, true, 500) != Smpt_Cmd_Ll_Init_Ack) {
+						// error
+						RehaMove3::printMessage(printMSG_error, "%s Error: The device could not be initialised! The LL_Init acknowledgement is missing!\n", this->DeviceIDClass);
+						DoDeviceReset = true;
+						continue;
+					} else {
+						// update the internal status
+						this->rmStatus.DeviceLlIsInitialised = true;
+						// lock the sequence queue
+						pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
+						// show the warning about a full queue only one -> reset the value to true
+						this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults = true;
+						// unlock the sequence queue
+						pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
+						RehaMove3::printMessage(printMSG_rmInitParam, "     -> SUCCESSFUL initialised\n");
+					}
 				} else {
-			        // update the internal status
-			        this->rmpStatus.DeviceLlIsInitialised = true;
-			    	// lock the sequence queue
-			    	pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
-			    	// show the warning about a full queue only one -> reset the value to true
-			    	this->SequenceQueue.DoNotReportUnclaimedSequenceResults = true;
-			    	// unlock the sequence queue
-			    	pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
-					RehaMove3::printMessage(printMSG_rmpInitParam, "     -> SUCCESSFUL initialised\n");
+					RehaMove3::printMessage(printMSG_error, "%s Error: Sending the command %d failed!\n", this->DeviceIDClass, Smpt_Cmd_Ll_Init);
+					RehaMove3::AbortDeviceInitialisation();
+					return false;
 				}
 			} else {
-				RehaMove3::printMessage(printMSG_error, "%s Error: Sending the command %d failed!\n", this->DeviceIDClass, Smpt_Cmd_Ll_Init);
+				// init configuration is invalid
+				RehaMove3::printMessage(printMSG_error, "%s Error: The stimulator could not be initialised since the initial parameter structure of the low level protocol is invalid!\n", this->DeviceIDClass);
 				RehaMove3::AbortDeviceInitialisation();
 				return false;
 			}
-		} else {
-			// init configuration is invalid
-			RehaMove3::printMessage(printMSG_error, "%s Error: The stimulator could not be initialised since the initial parameter structure of the low level protocol is invalid!\n", this->DeviceIDClass);
+			break;} // end low level
+
+
+		case REHAMOVE_MODE_MIDLEVEL:{
+			/*
+			 * MidLevel communication mode
+			 */
+			Smpt_ml_init ml_init = {0};
+			smpt_clear_ml_init(&ml_init);
+
+			// package number
+			ml_init.packet_number = RehaMove3::GetPackageNumber();
+
+			// check the configuration
+			if (smpt_is_valid_ml_init(&ml_init)) {
+				// init configuration is valid
+				RehaMove3::printMessage(printMSG_rmInitParam, "%s DEBUG: Initialising the MidLevel Protocol\n     -> no parameter\n", this->DeviceIDClass);
+
+				// Send the ll_init command to the stimulator
+				if (smpt_send_ml_init(&(this->Device), &ml_init)) {
+					if (RehaMove3::GetResponse(Smpt_Cmd_Ml_Init_Ack, true, 500) != Smpt_Cmd_Ml_Init_Ack) {
+						// error
+						RehaMove3::printMessage(printMSG_error, "%s Error: The device could not be initialised! The ML_Init acknowledgement is missing!\n", this->DeviceIDClass);
+						DoDeviceReset = true;
+						continue;
+					} else {
+						// update the internal status
+						this->rmStatus.DeviceMlIsInitialised = true;
+						RehaMove3::printMessage(printMSG_rmInitParam, "     -> SUCCESSFUL initialised\n");
+					}
+				} else {
+					RehaMove3::printMessage(printMSG_error, "%s Error: Sending the command %d failed!\n", this->DeviceIDClass, Smpt_Cmd_Ml_Init);
+					RehaMove3::AbortDeviceInitialisation();
+					return false;
+				}
+			} else {
+				// init configuration is invalid
+				RehaMove3::printMessage(printMSG_error, "%s Error: The stimulator could not be initialised since the initial parameter structure of the mid level protocol is invalid!\n", this->DeviceIDClass);
+				RehaMove3::AbortDeviceInitialisation();
+				return false;
+			}
+			break;} // end mid level
+
+		default:
+			// protocol is invalid
+			RehaMove3::printMessage(printMSG_error, "%s Error: The stimulator could not be initialised since the communication protocol %u is invalid!\n", this->DeviceIDClass, this->rmSettings.CommProtocol);
 			RehaMove3::AbortDeviceInitialisation();
 			return false;
 		}
@@ -512,7 +563,7 @@ bool RehaMove3::InitialiseDevice(void)
 		// get the current main status -> saving the data is done in the response handlers
 		if (smpt_send_get_main_status(&(this->Device), RehaMove3::GetPackageNumber())) {
 			if (RehaMove3::NewStatusUpdateReceived(200)){
-				// TODO Init MAIN check: DataMeasurment initialised
+				// main status could be read -> done
 			} else {
 				RehaMove3::printMessage(printMSG_error, "%s Error: The current 'MAIN Status' could net be read!\n", this->DeviceIDClass);
 				DoDeviceReset = true;
@@ -528,67 +579,53 @@ bool RehaMove3::InitialiseDevice(void)
 	} while (DoDeviceReset);
 
 	// print the status
-	RehaMove3::printMessage(printMSG_rmpInitInfo, "%s: Initialising %s was successful!\n", this->DeviceIDClass, this->DeviceFileName);
-	if (this->rmpInitSettings.DebugConfig.printInitInfos){
-		RehaMove3::GetCurrentStatus(this->rmpInitSettings.DebugConfig.printInitInfos, false, 0);
+	RehaMove3::printMessage(printMSG_rmInitInfo, "%s: Initialising %s was successful!\n", this->DeviceIDClass, this->DeviceFileName);
+	if (this->rmInitSettings.DebugConfig.printInitInfos){
+		RehaMove3::GetCurrentStatus(this->rmInitSettings.DebugConfig.printInitInfos, false, 0);
 	}
 
 	// the initialisation was not aborted, so it was successful
-	this->rmpStatus.DeviceInitialised = true;
-	this->rmpStatus.InitThreatRunning = false;
-	this->rmpStatus.InitThreatActive  = false;
+	this->rmStatus.DeviceInitialised = true;
+	this->rmStatus.InitThreatRunning = false;
+	this->rmStatus.InitThreatActive  = false;
 
-	this->rmpInitResult.finished = true;
-	this->rmpInitResult.successful = true;
-	memcpy(this->rmpInitResultExtern, &this->rmpInitResult, sizeof(this->rmpInitResult));
+	this->rmInitResult.finished = true;
+	this->rmInitResult.successful = true;
+	memcpy(this->rmInitResultExtern, &this->rmInitResult, sizeof(this->rmInitResult));
 	return true;
 }
 
 void RehaMove3::AbortDeviceInitialisation()
 {
-	this->rmpStatus.InitThreatRunning = false;
+	this->rmStatus.InitThreatRunning = false;
 	RehaMove3::CloseSerial();
-	this->rmpInitResult.finished = true;
-	this->rmpInitResult.successful = false;
-	memcpy(this->rmpInitResultExtern, &this->rmpInitResult, sizeof(this->rmpInitResult));
+	this->rmInitResult.finished = true;
+	this->rmInitResult.successful = false;
+	memcpy(this->rmInitResultExtern, &this->rmInitResult, sizeof(this->rmInitResult));
 }
 
-bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConfig)
+bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceConfig)
 {
 	// make sure the device is initialised
-	if (!this->rmpStatus.DeviceInitialised || !this->rmpStatus.DeviceLlIsInitialised){
+	if (!this->rmStatus.DeviceInitialised || !this->rmStatus.DeviceLlIsInitialised){
 		return false;
-	}
-
-	bool	 OneOrMorePulsesSend = false, WasCorrected = false;
-	uint8_t  NumberOfPoints = 0, iPoint = 0;
-	uint16_t PulseWidth[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {}, PWStepSize = 0, tempPW = 0;
-	float 	 Current[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {}, CurrentSign = 0, tempI = 0, CurrentStepSize = 0.0;
-	double 	 Charge = 0.0, ChargeOverAll = 0.0;
-
-	// Struct for Ll_channel_config command
-	Smpt_ll_channel_config 	ll_channel_config;
-
-	// Debug output
-	if (this->rmpInitSettings.DebugConfig.printStimInfos){
-		printf("\n%s Puls Info: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
 	}
 
 	/*
 	 * Handling StimulationErrors e.g. electrode errors
 	 */
-	if (this->rmpStatus.DoNotStimulate){
-		if ( this->rmpStatus.DoReTestTheStimError){
-			this->rmpStatus.NumberOfSequencesUntilErrorRetest--;
-			if (this->rmpStatus.NumberOfSequencesUntilErrorRetest != 0){
+	if (this->rmStatus.DoNotStimulate){
+		if ( this->rmStatus.DoReTestTheStimError){
+			this->rmStatus.NumberOfSequencesUntilErrorRetest--;
+			if (this->rmStatus.NumberOfSequencesUntilErrorRetest != 0){
 				// do not re-test for the errors yet
 				this->Stats.SequencesSend++;
 				this->Stats.SequencesFailed++;
 				return false;
 			} else {
 				// do re-test for the errors ....
-				this->rmpStatus.DoReTestTheStimError = false;
-				this->rmpStatus.DoNotStimulate = false;
+				this->rmStatus.DoReTestTheStimError = false;
+				this->rmStatus.DoNotStimulate = false;
 			}
 		} else {
 			// do not re-test for the errors ever
@@ -597,6 +634,21 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 			return false;
 		}
 	}
+
+	bool	 OneOrMorePulsesSend = false, WasCorrected = false;
+	uint8_t  NumberOfPoints = 0, iPoint = 0, iCh = 0;
+	uint16_t PulseWidth[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {}, PWStepSize = 0, tempPW = 0;
+	float 	 Current[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {}, CurrentSign = 0, tempI = 0, CurrentStepSize = 0.0;
+	double 	 Charge = 0.0, ChargeOverAll[REHAMOVE_NUMBER_OF_CHANNELS] = {0.0};
+
+	// Struct for Ll_channel_config command
+	Smpt_ll_channel_config 	ll_channel_config;
+
+	// Debug output
+	if (this->rmInitSettings.DebugConfig.printStimInfos){
+		printf("\n%s Puls Info: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
+	}
+
 	/*
 	 *  Loop through the pulses of one sequence
 	 */
@@ -612,21 +664,22 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 		// input checks/corrections -> make sure the stimulation does not exceed the stimlation boundaries
 		if (!RehaMove3::CheckChannel(SequenceConfig->PulseConfig[i_Puls].Channel)) {
 			// error: channel invalid
-			RehaMove3::printMessage(printMSG_rmpSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Puls].Channel, RehaMove3::GetCurrentTime(), i_Puls);
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Puls].Channel, RehaMove3::GetCurrentTime(), i_Puls);
 			continue;
 		}
+		iCh = SequenceConfig->PulseConfig[i_Puls].Channel -1;
 		WasCorrected = false;
 		tempPW = SequenceConfig->PulseConfig[i_Puls].PulseWidth;
 		SequenceConfig->PulseConfig[i_Puls].PulseWidth = CheckAndCorrectPulsewidth(SequenceConfig->PulseConfig[i_Puls].PulseWidth, &WasCorrected);
 		if (WasCorrected){
-			RehaMove3::printMessage(printMSG_rmpWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The pulse width was adjusted from %u to %u\n",
+			RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The pulse width was adjusted from %u to %u\n",
 					this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, tempPW, SequenceConfig->PulseConfig[i_Puls].PulseWidth);
 		}
 		WasCorrected = false;
 		tempI = SequenceConfig->PulseConfig[i_Puls].Current;
 		SequenceConfig->PulseConfig[i_Puls].Current = (float)CheckAndCorrectCurrent(SequenceConfig->PulseConfig[i_Puls].Current, &WasCorrected);
 		if (WasCorrected){
-			RehaMove3::printMessage(printMSG_rmpWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The current was adjusted from %+0.2f to %+0.2f\n",
+			RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The current was adjusted from %+0.2f to %+0.2f\n",
 					this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, tempI, SequenceConfig->PulseConfig[i_Puls].Current);
 		}
 
@@ -634,6 +687,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 		switch (SequenceConfig->PulseConfig[i_Puls].Shape) {
 		case Shape_Balanced_Symetric_Biphasic:
 		case Shape_Balanced_Symetric_Biphasic_NEGATIVE:
+			// 0/1 symmetric biphasic pulse; charge balanced
 			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_Symetric_Biphasic_NEGATIVE){
 				// handle the negative case
 				SequenceConfig->PulseConfig[i_Puls].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Puls].Current);
@@ -645,12 +699,13 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 			Current[iPoint++] = 0.0;
 			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Puls].PulseWidth;    	// negative pulse
 			Current[iPoint++] = -1.0 * SequenceConfig->PulseConfig[i_Puls].Current;
-			ChargeOverAll += 0;
+			ChargeOverAll[iCh] += 0;
 			NumberOfPoints = iPoint;
 			break;
 
 		case Shape_Balanced_UNsymetric_Biphasic:
 		case Shape_Balanced_UNsymetric_Biphasic_NEGATIVE:
+			// 2/3 unsymmetric biphasic pulse; charge balanced
 			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_Biphasic_NEGATIVE){
 				// handle the negative case
 				SequenceConfig->PulseConfig[i_Puls].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Puls].Current);
@@ -664,12 +719,13 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 			PulseWidth[iPoint]  = 100;                                					// 100us break
 			Current[iPoint++]   = 0.0;
 			iPoint += RehaMove3::GetMinimalCurrentPulse(&PulseWidth[iPoint], &Current[iPoint], &Charge, 1); // negative pulse
-			ChargeOverAll += Charge;
+			ChargeOverAll[iCh] += Charge;
 			NumberOfPoints = iPoint;
 			break;
 
 		case Shape_UNbalanced_UNsymetric_Monophasic:
 		case Shape_UNbalanced_UNsymetric_Monophasic_NEGATIVE:
+			// 4/5 -> monophasic pulse; charge balanced
 			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_UNbalanced_UNsymetric_Monophasic_NEGATIVE){
 				// handle the negative case
 				SequenceConfig->PulseConfig[i_Puls].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Puls].Current);
@@ -677,7 +733,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 			iPoint = 0;
 			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Puls].PulseWidth;     // first pulse
 			Current[iPoint]    = SequenceConfig->PulseConfig[i_Puls].Current;
-			ChargeOverAll += PulseWidth[iPoint] * Current[iPoint];
+			ChargeOverAll[iCh] += PulseWidth[iPoint] * Current[iPoint];
 			iPoint++;
 			NumberOfPoints = iPoint;
 			break;
@@ -685,7 +741,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 		case Shape_UNbalanced_UNsymetric_Biphasic_FIRST:
 		case Shape_Balanced_UNsymetric_Biphasic_FIRST:
 		case Shape_Balanced_UNsymetric_LONG_Biphasic_FIRST:
-			// 6 -> erster  Teil eines biphasischen, UNgleichmässigen und UNausgeglichenen Pulses, Polarität wird durch den Strom bestimmt
+			// 6/8/10 -> first part of a unsymmetric biphasic pulse; polarity depends on the current sign
 			// does the secound pulse exist?
 			if ( SequenceConfig->PulseConfig[i_Puls +1].Shape == Shape_UNbalanced_UNsymetric_Biphasic_SECOUND ||
 				 SequenceConfig->PulseConfig[i_Puls +1].Shape == Shape_Balanced_UNsymetric_Biphasic_SECOUND   ||
@@ -708,10 +764,10 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 				} else if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_LONG_Biphasic_FIRST) {
 					iPoint += RehaMove3::GetMinimalCurrentPulse(&PulseWidth[iPoint], &Current[iPoint], &Charge, 7);
 				}
-				ChargeOverAll += Charge;
+				ChargeOverAll[iCh] += Charge;
 				NumberOfPoints = iPoint;
 			} else {
-				RehaMove3::printMessage(printMSG_rmpSequenceError, "%s Error: The second half of an (UN)Balanced, UNsymmetric, biphasic pulse was not defined!\n     -> Puls %u is discarded!\n!\n", this->DeviceIDClass, i_Puls);
+				RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The second half of an (UN)Balanced, UNsymmetric, biphasic pulse was not defined!\n     -> Puls %u is discarded!\n!\n", this->DeviceIDClass, i_Puls);
 				NumberOfPoints = 0;
 				continue;
 
@@ -721,8 +777,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 		case Shape_UNbalanced_UNsymetric_Biphasic_SECOUND:
 		case Shape_Balanced_UNsymetric_Biphasic_SECOUND:
 		case Shape_Balanced_UNsymetric_LONG_Biphasic_SECOUND:
-			// 7 -> zweiter Teil eines biphasischen, UNgleichmässigen und UNausgeglichenen Pulses, Polarität entgegengesetzt zum ersten Puls
-			// the configuration was already used -> skip this SequenceConfig->PulseConfiguration
+			// 7/9/11 -> second part of the unsymmetric biphasic pulse; the configuration was already used -> skip this SequenceConfig->PulseConfiguration
 			NumberOfPoints = 0;
 			continue;
 			break;
@@ -732,7 +787,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 		case Shape_UNbalanced_UNsymetric_RisingTriangle:
 		case Shape_UNbalanced_UNsymetric_FallingTriangle:
 			{
-			// 12 -> dreieckiger UNgleichmässigen und ausgeglichenen Pulses, Polarität wird durch den Strom bestimmt; Dreieck in der ersten Flanke
+			// 12-15 -> Triangle pulse, balanced/UNbanced; polarity is defined by the current sign
 			// Puls Breite
 			uint8_t tempNumberOfPoints = 0;
 			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_RisingTriangle ||
@@ -815,74 +870,27 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 				iPoint += RehaMove3::GetMinimalCurrentPulse(&PulseWidth[iPoint], &Current[iPoint], &Charge, 1);
 			}
 			// done
-			ChargeOverAll += Charge;
+			ChargeOverAll[iCh] += Charge;
 			NumberOfPoints = iPoint;
 			break;}
 
-/*
-// TODO: Nur für einen Kanal ausgleichen
 		case Shape_UNbalanced_Charge_Compensation:
-			// 20 -> Kompensataionspuls um den Ladungsausgleich herzustellen
-			if (fabs(ChargeOverAll) >= REHAMOVE__PW_MIN * REHAMOVE__I_MIN) {
-				NumberOfPoints = 3;
-				if (ChargeOverAll <= 0) {
-					CurrentSign = 1.0;
-				} else {
-					CurrentSign = -1.0;
-				}
-				for (NumberOfPoints = 0;
-						NumberOfPoints < REHAMOVE__MAX_POINTS_COMPENSATION_PULS;
-						NumberOfPoints++) {
-					Current[NumberOfPoints] =
-							(REHAMOVE__I_STEP_COMPENSATION_PULS
-									* (NumberOfPoints + 1)) * CurrentSign;
-					PulseWidth[NumberOfPoints] = (int) (fabs(ChargeOverAll)
-							/ (REHAMOVE__I_STEP_COMPENSATION_PULS
-									* (NumberOfPoints + 1)));
-					if (PulseWidth[NumberOfPoints]
-							> REHAMOVE__PW_COMPENSATION_PULS) {
-						// set the current to the minimum and change the pulse width accordingly
-						PulseWidth[NumberOfPoints] =
-								REHAMOVE__PW_COMPENSATION_PULS;
-					}
-					ChargeOverAll += PulseWidth[NumberOfPoints]
-							* Current[NumberOfPoints];
-					if (fabs(
-							ChargeOverAll) <= REHAMOVE__PW_MIN*REHAMOVE__I_MIN) {
-						break;
-					}
-				}
-				if (fabs(ChargeOverAll) >= REHAMOVE__PW_MIN * REHAMOVE__I_MIN) {
-					ChargeOverAll += PulseWidth[NumberOfPoints - 1]
-							* Current[NumberOfPoints - 1] * -1.0;
-					// set the current as needed and change the pulse width as long as possible
-					PulseWidth[NumberOfPoints - 1] =
-							PULSWIDTH_BALANCED_UNSYMETRIC;
-					Current[NumberOfPoints - 1] = (float) (ChargeOverAll
-							/ PULSWIDTH_BALANCED_UNSYMETRIC); // third pulse, very long with
-				}
-				ChargeOverAll += PulseWidth[NumberOfPoints - 1]
-						* Current[NumberOfPoints - 1];
+			// 16 -> charge compensation for one channel
+			if (fabs(ChargeOverAll[iCh]) >= REHAMOVE_SHAPES__PW_MIN * REHAMOVE_SHAPES__I_MIN) {
+				NumberOfPoints = RehaMove3::GetMinimalCurrentPulse(&PulseWidth[0], &Current[0], &ChargeOverAll[iCh], 2);
 			} else {
 				NumberOfPoints = 0;
 				continue;
 			}
 			break;
-*/
 
 		/*
 		 * Done with the pulse form generation
 		 */
 		default:
 			// error: unknown shape
-			RehaMove3::printMessage(printMSG_rmpSequenceError, "%s Error: The requested shape %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Puls].Shape, RehaMove3::GetCurrentTime(), i_Puls);
-			// TODO: mark this pulse as not executed
+			RehaMove3::printMessage(printMSG_error, "%s Error: The requested shape %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Puls].Shape, RehaMove3::GetCurrentTime(), i_Puls);
 			continue;
-		}
-
-		if (ChargeOverAll > 1.0) {
-			RehaMove3::printMessage(printMSG_rmpWarningCorrectionChargeInbalace, "%s Charge Unbalance:\n   -> The remaining charge over all points is still != 0 but is %0.2f mAuS! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, ChargeOverAll, RehaMove3::GetCurrentTime(), i_Puls);
-			// TODO: mark this pulse as not balanced
 		}
 
 		/*
@@ -894,8 +902,8 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 			ll_channel_config.number_of_points = NumberOfPoints; 	// Set the number of points
 			// Set the stimulation pulse
 			for (iPoint = 0; iPoint < NumberOfPoints; iPoint++) {
-				ll_channel_config.points[iPoint].control_mode = Smpt_Ll_Control_Current; 			// TODO: support other control techniques
-				ll_channel_config.points[iPoint].interpolation_mode = Smpt_Ll_Interpolation_Jump;  // TODO: support other interpolation methods
+				ll_channel_config.points[iPoint].control_mode = Smpt_Ll_Control_Current;
+				ll_channel_config.points[iPoint].interpolation_mode = Smpt_Ll_Interpolation_Jump;
 				ll_channel_config.points[iPoint].time = PulseWidth[iPoint];
 				ll_channel_config.points[iPoint].current = Current[iPoint];
 			}
@@ -907,27 +915,22 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 		/*
 		 * Debug output of this pulse
 		 */
-		if (this->rmpInitSettings.DebugConfig.printStimInfos){
+		if (this->rmInitSettings.DebugConfig.printStimInfos){
 			// Stimulation configuration
-			RehaMove3::printMessage(printMSG_rmpPulseConfig, "  Puls %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n",i_Puls+1, SequenceConfig->PulseConfig[i_Puls+1].Channel, SequenceConfig->PulseConfig[i_Puls].Shape, SequenceConfig->PulseConfig[i_Puls].PulseWidth, SequenceConfig->PulseConfig[i_Puls].Current);
+			RehaMove3::printMessage(printMSG_rmPulseConfig, "  Puls %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n",i_Puls+1, (uint8_t)ll_channel_config.channel+1, SequenceConfig->PulseConfig[i_Puls].Shape, SequenceConfig->PulseConfig[i_Puls].PulseWidth, SequenceConfig->PulseConfig[i_Puls].Current);
 			if ( SequenceConfig->PulseConfig[i_Puls+1].Shape == Shape_UNbalanced_UNsymetric_Biphasic_SECOUND || SequenceConfig->PulseConfig[i_Puls+1].Shape == Shape_Balanced_UNsymetric_Biphasic_SECOUND ) {
-				RehaMove3::printMessage(printMSG_rmpPulseConfig, "  Puls %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n", i_Puls+2, SequenceConfig->PulseConfig[i_Puls+1].Channel, SequenceConfig->PulseConfig[i_Puls+1].Shape, SequenceConfig->PulseConfig[i_Puls+1].PulseWidth, SequenceConfig->PulseConfig[i_Puls+1].Current);
+				RehaMove3::printMessage(printMSG_rmPulseConfig, "  Puls %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n", i_Puls+2, SequenceConfig->PulseConfig[i_Puls+1].Channel, SequenceConfig->PulseConfig[i_Puls+1].Shape, SequenceConfig->PulseConfig[i_Puls+1].PulseWidth, SequenceConfig->PulseConfig[i_Puls+1].Current);
 			}
 			for (iPoint=0; iPoint<ll_channel_config.number_of_points; iPoint++) {
-				RehaMove3::printMessage(printMSG_rmpPulseConfig, "     PointConfig% 3d: Duration=% 4iµs; Current=% +7.2fmA; (Mode=%i; IM=%i)\n",
+				RehaMove3::printMessage(printMSG_rmPulseConfig, "     PointConfig% 3d: Duration=% 4iµs; Current=% +7.2fmA; (Mode=%i; IM=%i)\n",
 						iPoint+1, ll_channel_config.points[iPoint].time, ll_channel_config.points[iPoint].current, ll_channel_config.points[iPoint].control_mode, ll_channel_config.points[iPoint].interpolation_mode );
 			}
-		}
-		if (this->rmpInitSettings.DebugConfig.printStimInfos){
-			// Stimulation configuration
-			//RehaMove3::printMessage(printMSG_rmpPulseConfig, "\n");
 		}
 
 		/*
 		 * Prepare for acks and sequence statistics
 		 */
 		ll_channel_config.packet_number = GetPackageNumber();
-		//this->Acks.LastPackageNumbers[i_Puls] = ll_channel_config.packet_number; TODO
 
 		/*
 		 * Check the configuration and send it
@@ -938,23 +941,27 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 				OneOrMorePulsesSend = true;
 				this->Stats.StimultionPulsesSend++;
 				// add the expected response to the ChannelResponse queue
-				PutChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
+				PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
 			} else {
 				// error: failed to send the configuration
 				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
 				this->Stats.StimultionPulsesNotSend++;
-				// TODO: mark this pulse as not send
 			}
 		} else {
 			// error: channel configuration is INvalid
-			RehaMove3::printMessage(printMSG_rmpSequenceError, "%s Error: The channel configuration is not valid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
-			// TODO: mark this pulse as not send
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The channel configuration is NOT valid! The pulse was not send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
 			this->Stats.StimultionPulsesNotSend++;
 		}
 	} // for loop
 
+	for (uint8_t iCh=0; iCh<REHAMOVE_NUMBER_OF_CHANNELS; iCh++){
+		if (fabs(ChargeOverAll[iCh]) > 10.0) {
+			RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Charge Unbalanced:\n   -> The remaining charge |C| over all pulses and points of channel %u is greater than 10 mAuS but is %0.2f mAuS! (time: %0.3f)\n", this->DeviceIDClass, iCh, ChargeOverAll[iCh], RehaMove3::GetCurrentTime());
+		}
+	}
+
 	// Debug
-	if (this->rmpInitSettings.DebugConfig.printStimInfos){
+	if (this->rmInitSettings.DebugConfig.printStimInfos){
 		printf("\n");
 	}
 
@@ -965,140 +972,601 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(SequenceConfig_t *SequenceConf
 	return true;
 }
 
-bool RehaMove3::GetLastSequenceResult(uint16_t *PulseErrors, bool *SequenceWasComplete)
+
+bool RehaMove3::SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSequenceConfig)
 {
-	// todo gibt das letzte simulationsergebnis zurück -> return für fehler oder nicht und Argument für das eigentliche resultat
-	// nur diese die Funktion enfernt die letzte sequence aus der Queue
+	// make sure the device is initialised
+	if (!this->rmStatus.DeviceInitialised || !this->rmStatus.DeviceLlIsInitialised){
+		return false;
+	}
+	/*
+	 * Handling StimulationErrors e.g. electrode errors
+	 */
+	if (this->rmStatus.DoNotStimulate){
+		if ( this->rmStatus.DoReTestTheStimError){
+			this->rmStatus.NumberOfSequencesUntilErrorRetest--;
+			if (this->rmStatus.NumberOfSequencesUntilErrorRetest != 0){
+				// do not re-test for the errors yet
+				this->Stats.SequencesSend++;
+				this->Stats.SequencesFailed++;
+				return false;
+			} else {
+				// do re-test for the errors ....
+				this->rmStatus.DoReTestTheStimError = false;
+				this->rmStatus.DoNotStimulate = false;
+			}
+		} else {
+			// do not re-test for the errors ever
+			this->Stats.SequencesSend++;
+			this->Stats.SequencesFailed++;
+			return false;
+		}
+	}
+
+	bool	 OneOrMorePulsesSend = false, WasCorrected = false;
+	uint8_t  iPoint = 0;
+	uint16_t tempPW = 0;
+	float 	 tempI = 0;
+
+	// Struct for Ll_channel_config command
+	Smpt_ll_channel_config 	ll_channel_config;
+
+	// Debug output
+	if (this->rmInitSettings.DebugConfig.printStimInfos){
+		printf("\n%s Puls Info: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
+	}
+
+	/*
+	 *  Loop through the pulses of one sequence
+	 */
+	for (uint8_t i_Puls = 0; i_Puls < CustomSequenceConfig->NumberOfPulses; i_Puls++){
+		// Clear Ll_channel_config and set the data
+		smpt_clear_ll_channel_config(&ll_channel_config);
+
+		if (CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[0] == 0){
+			// the first pulse width is 0 -> skip this pulse
+			continue;
+		}
+
+		// input checks/corrections -> make sure the stimulation does not exceed the stimlation boundaries
+		if (!RehaMove3::CheckChannel(CustomSequenceConfig->PulseConfig[i_Puls].Channel)) {
+			// error: channel invalid
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, CustomSequenceConfig->PulseConfig[i_Puls].Channel, RehaMove3::GetCurrentTime(), i_Puls);
+			continue;
+		}
+
+		if (CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints >  REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX){
+			// error: number of point invalid
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested number of points of this pulse form %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints, RehaMove3::GetCurrentTime(), i_Puls);
+			continue;
+		}
+
+		/*
+		 * Build the channel configuration
+		 */
+		if (CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints > 0){
+			ll_channel_config.enable_stimulation = 1; 				// Activate the module
+			ll_channel_config.channel = (Smpt_Channel) (CustomSequenceConfig->PulseConfig[i_Puls].Channel -1); // Set the correct channel
+			ll_channel_config.number_of_points = 0; 	// Set the number of points
+			// Set the stimulation pulse
+			for (iPoint = 0; iPoint < CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints; iPoint++) {
+				ll_channel_config.points[iPoint].control_mode = Smpt_Ll_Control_Current;
+				ll_channel_config.points[iPoint].interpolation_mode = Smpt_Ll_Interpolation_Jump;
+				WasCorrected = false;
+				tempPW = CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint];
+				CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint] = CheckAndCorrectPulsewidth(CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint], &WasCorrected);
+				if (WasCorrected){
+					RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The pulse width of point %u was adjusted from %u to %u\n",
+							this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, iPoint+1, tempPW, CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth);
+				}
+				if (CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint] == 0){
+					// the point is 0 -> this puls is done
+					break;
+				}
+				ll_channel_config.points[iPoint].time = CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint];
+				WasCorrected = false;
+				tempI = CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint];
+				CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint] = (float)CheckAndCorrectCurrent(CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint], &WasCorrected);
+				if (WasCorrected){
+					RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The current of point %u was adjusted from %+0.2f to %+0.2f\n",
+							this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, iPoint+1, tempI, CustomSequenceConfig->PulseConfig[i_Puls].Current);
+				}
+				ll_channel_config.points[iPoint].current = CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint];
+				// increase the number of points
+				ll_channel_config.number_of_points++;
+			}
+		} else {
+			ll_channel_config.enable_stimulation = 0; 				// Activate the module
+			ll_channel_config.number_of_points = 0; 				// Set the number of points
+		}
+
+		/*
+		 * Debug output of this pulse
+		 */
+		if (this->rmInitSettings.DebugConfig.printStimInfos){
+			// Stimulation configuration
+			RehaMove3::printMessage(printMSG_rmPulseConfig, "  Puls %u -> Channel=%u\n",i_Puls+1, (uint8_t)ll_channel_config.channel+1);
+			for (iPoint=0; iPoint<ll_channel_config.number_of_points; iPoint++) {
+				RehaMove3::printMessage(printMSG_rmPulseConfig, "     PointConfig% 3d: Duration=% 4iµs; Current=% +7.2fmA; (Mode=%i; IM=%i)\n",
+						iPoint+1, ll_channel_config.points[iPoint].time, ll_channel_config.points[iPoint].current, ll_channel_config.points[iPoint].control_mode, ll_channel_config.points[iPoint].interpolation_mode );
+			}
+		}
+
+		/*
+		 * Prepare for acks and sequence statistics
+		 */
+		ll_channel_config.packet_number = GetPackageNumber();
+
+		/*
+		 * Check the configuration and send it
+		 */
+		if (smpt_is_valid_ll_channel_config(&ll_channel_config)) {
+			// Send the Ll_channel_list command to RehaMove
+			if (smpt_send_ll_channel_config(&(this->Device), &ll_channel_config)){
+				OneOrMorePulsesSend = true;
+				this->Stats.StimultionPulsesSend++;
+				// add the expected response to the ChannelResponse queue
+				PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
+			} else {
+				// error: failed to send the configuration
+				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
+				this->Stats.StimultionPulsesNotSend++;
+			}
+		} else {
+			// error: channel configuration is INvalid
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The channel configuration is NOT valid! The pulse was not send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
+			this->Stats.StimultionPulsesNotSend++;
+		}
+	} // for loop
+
+	// Debug
+	if (this->rmInitSettings.DebugConfig.printStimInfos){
+		printf("\n");
+	}
+
+	// done sending the sequence configuration
+	if (OneOrMorePulsesSend){
+		this->Stats.SequencesSend++;
+	}
+	return true;
+}
+
+bool RehaMove3::SendMidLevelUpdate(MlUpdateConfig_t *UpdateConfig)
+{
+	// make sure the device is initialised
+	if (!this->rmStatus.DeviceInitialised || !this->rmStatus.DeviceMlIsInitialised){
+		return false;
+	}
+
+	// check if an update is necessary
+	if (!UpdateConfig->ForceUpdate){
+		if (memcmp(&this->rmSettings.MidLevel.CurrentMlStimConfig, UpdateConfig, sizeof(MlUpdateConfig_t)) == 0){
+			// the sequence config is identical to the old config -> do not send an update
+			this->rmSettings.MidLevel.UpdateCallsSinceLastUpdate++;
+
+			// send keep alive signal if needed -> only necessary if the UpdateConfig has not changed
+			if (this->rmInitSettings.MidLevelConfig.SendKeepAliveSignalDuringPeriodicMlUpdateCall){
+				// the update function is called periodical and is used to trigger the keep alive signal
+				if (this->rmSettings.MidLevel.UpdateCallsUntilKeepAliveSignal <= 0.0){
+					// the keep alive signal must be send
+					RehaMove3::SendMidLevelKeepAliveSignal();
+					this->rmSettings.MidLevel.UpdateCallsUntilKeepAliveSignal = (int32_t)this->rmInitSettings.MidLevelConfig.KeepAliveNumberOfUpdateCalls;
+				} else {
+					this->rmSettings.MidLevel.UpdateCallsUntilKeepAliveSignal--;
+				}
+			}
+
+			// update the variables for the ramp-feature
+			if (this->rmInitSettings.MidLevelConfig.SetRampsDuringPeriodicMlUpdateCall){
+				for (uint8_t iCh=0; iCh<REHAMOVE_NUMBER_OF_CHANNELS; iCh++){
+					if (this->rmSettings.MidLevel.ChannelDisabled[iCh]){
+						this->rmSettings.MidLevel.UpdateCallsUntilRedoRamp[iCh]--;
+					}
+				}
+			}
+			return false;
+		}
+	}
+
+	/*
+	 * Handling StimulationErrors e.g. electrode errors
+	 */
+	if (this->rmStatus.DoNotStimulate){
+		if (this->rmStatus.DoReTestTheStimError){
+			this->rmStatus.NumberOfSequencesUntilErrorRetest--;
+			if (this->rmStatus.NumberOfSequencesUntilErrorRetest != 0){
+				// do not re-test for the errors yet
+				return false;
+			} else {
+				// do re-test for the errors ....
+				this->rmStatus.DoReTestTheStimError = false;
+				this->rmStatus.DoNotStimulate = false;
+			}
+		} else {
+			// do not re-test for the errors ever
+			return false;
+		}
+	}
+	// save current config, before it is changed
+	memcpy(&this->rmSettings.MidLevel.CurrentMlStimConfigTemp, UpdateConfig, sizeof(MlUpdateConfig_t));
+
+	bool	 WasCorrected = false;
+	uint8_t  NumberOfPoints = 0, iPoint = 0;
+	uint16_t PulseWidth[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {}, tempPW = 0;
+	float 	 Current[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {}, tempI = 0;
+	double 	 ChargeOverAll = 0.0;
+
+	// Struct for UpdateConfig command
+	Smpt_ml_update mlConfig;
+	smpt_clear_ml_update(&mlConfig);
+
+	// Debug output
+	if (this->rmInitSettings.DebugConfig.printStimInfos){
+		printf("\n%s Update Info: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
+	}
+
+	/*
+	 *  Loop through the channels
+	 */
+	for (uint8_t iCh = 0; iCh < REHAMOVE_NUMBER_OF_CHANNELS; iCh++){
+		if (UpdateConfig->ActiveChannels[iCh]){
+			if (UpdateConfig->PulseConfig[iCh].PulseWidth == 0){
+				// the pulse width is 0 -> skip this pulse
+				// update the variables for the ramp-feature
+				if (this->rmInitSettings.MidLevelConfig.SetRampsDuringPeriodicMlUpdateCall){
+					this->rmSettings.MidLevel.ChannelDisabled[iCh] = true;
+					this->rmSettings.MidLevel.UpdateCallsUntilRedoRamp[iCh]--;
+				}
+				continue;
+			}
+
+			// this channel is active -> update the configuration
+
+			// input checks/corrections -> make sure the stimulation does not exceed the stimlation boundaries
+			if (!RehaMove3::CheckChannel(UpdateConfig->PulseConfig[iCh].Channel)) {
+				// error: channel invalid
+				RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, UpdateConfig->PulseConfig[iCh].Channel, RehaMove3::GetCurrentTime(), iCh);
+				continue;
+			}
+			WasCorrected = false;
+			tempPW = UpdateConfig->PulseConfig[iCh].PulseWidth;
+			UpdateConfig->PulseConfig[iCh].PulseWidth = CheckAndCorrectPulsewidth(UpdateConfig->PulseConfig[iCh].PulseWidth, &WasCorrected);
+			if (WasCorrected){
+				RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The pulse width was adjusted from %u to %u\n",
+						this->DeviceIDClass, RehaMove3::GetCurrentTime(), iCh+1, tempPW, UpdateConfig->PulseConfig[iCh].PulseWidth);
+			}
+			WasCorrected = false;
+			tempI = UpdateConfig->PulseConfig[iCh].Current;
+			UpdateConfig->PulseConfig[iCh].Current = (float)CheckAndCorrectCurrent(UpdateConfig->PulseConfig[iCh].Current, &WasCorrected);
+			if (WasCorrected){
+				RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The current was adjusted from %+0.2f to %+0.2f\n",
+						this->DeviceIDClass, RehaMove3::GetCurrentTime(), iCh+1, tempI, UpdateConfig->PulseConfig[iCh].Current);
+			}
+
+			// build point list
+			switch (UpdateConfig->PulseConfig[iCh].Shape) {
+			case Shape_Balanced_Symetric_Biphasic:
+				iPoint = 0;
+				PulseWidth[iPoint] = UpdateConfig->PulseConfig[iCh].PulseWidth;    	// positive pulse
+				Current[iPoint++] = UpdateConfig->PulseConfig[iCh].Current;
+				PulseWidth[iPoint] = 100;                                				// 100us break
+				Current[iPoint++] = 0.0;
+				PulseWidth[iPoint] = UpdateConfig->PulseConfig[iCh].PulseWidth;    	// negative pulse
+				Current[iPoint++] = -1.0 * UpdateConfig->PulseConfig[iCh].Current;
+				ChargeOverAll += 0;
+				NumberOfPoints = iPoint;
+				break;
+			/*
+			 * Done with the pulse form generation
+			 */
+			default:
+				// error: unknown shape
+				RehaMove3::printMessage(printMSG_error, "%s Error: The requested shape %u is invalid! (time: %0.3f; channel: %u)\n", this->DeviceIDClass, UpdateConfig->PulseConfig[iCh].Shape, RehaMove3::GetCurrentTime(), iCh);
+				continue;
+			}
+
+			if (ChargeOverAll > 1.0) {
+				RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Charge Unbalanced:\n   -> The remaining charge over all points is still != 0 but is %0.2f mAuS! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, ChargeOverAll, RehaMove3::GetCurrentTime(), iCh);
+			}
+
+			/*
+			 * Build the channel configuration
+			 */
+			if (NumberOfPoints > 0){
+				mlConfig.channel_config[iCh].period = (1.0/UpdateConfig->PulseConfig[iCh].Frequency)*1000;
+				if (this->rmInitSettings.MidLevelConfig.UseRamps && (this->rmInitSettings.MidLevelConfig.SetRampsDuringPeriodicMlUpdateCall || UpdateConfig->RedoRamp)){
+					// update the variables for the ramp-feature
+					if (UpdateConfig->PulseConfig[iCh].Current == 0.0){
+						this->rmSettings.MidLevel.ChannelDisabled[iCh] = true;
+						this->rmSettings.MidLevel.UpdateCallsUntilRedoRamp[iCh]--;
+						mlConfig.channel_config[iCh].ramp = 0;
+					} else {
+						this->rmSettings.MidLevel.ChannelDisabled[iCh] = false;
+					}
+
+					// set ramps is the counter is below zero or zero
+					if ((this->rmSettings.MidLevel.UpdateCallsUntilRedoRamp[iCh] <= 0) || UpdateConfig->RedoRamp){
+						// set the ramp setting if ramps are enabled and if they where not done yet or the should be redone, e.g. after a pause
+						mlConfig.channel_config[iCh].ramp = (uint8_t)round(this->rmInitSettings.MidLevelConfig.RampsUpdates);
+						this->rmSettings.MidLevel.UpdateCallsUntilRedoRamp[iCh] = (int32_t) round(this->rmInitSettings.MidLevelConfig.RampsZeroUpdates);
+					}
+				} else {
+					mlConfig.channel_config[iCh].ramp = 0;
+				}
+				mlConfig.channel_config[iCh].number_of_points = NumberOfPoints; 	// Set the number of points
+				// Set the stimulation pulse
+				for (iPoint = 0; iPoint < NumberOfPoints; iPoint++) {
+					mlConfig.channel_config[iCh].points[iPoint].control_mode = Smpt_Ll_Control_Current;
+					mlConfig.channel_config[iCh].points[iPoint].interpolation_mode = Smpt_Ll_Interpolation_Jump;
+					mlConfig.channel_config[iCh].points[iPoint].time = PulseWidth[iPoint];
+					mlConfig.channel_config[iCh].points[iPoint].current = Current[iPoint];
+				}
+			} else {
+				// no points -> do not enable this channel, this should never happen ...
+				continue;
+			}
+
+			/*
+			 * Debug output of this pulse
+			 */
+			if (this->rmInitSettings.DebugConfig.printStimInfos){
+				// Stimulation configuration
+				RehaMove3::printMessage(printMSG_rmPulseConfig, "  Channel=%u; -> Frequency=%4.2fHz; Shape=%u; PW=%u; I=%0.1f; Ramp=%u\n",iCh+1, UpdateConfig->PulseConfig[iCh].Frequency, UpdateConfig->PulseConfig[iCh].Shape, UpdateConfig->PulseConfig[iCh].PulseWidth, UpdateConfig->PulseConfig[iCh].Current, mlConfig.channel_config[iCh].ramp);
+				for (iPoint=0; iPoint<mlConfig.channel_config[iCh].number_of_points; iPoint++) {
+					RehaMove3::printMessage(printMSG_rmPulseConfig, "     PointConfig% 3d: Duration=% 4iµs; Current=% +7.2fmA; (Mode=%i; IM=%i)\n",
+						iPoint+1, mlConfig.channel_config[iCh].points[iPoint].time, mlConfig.channel_config[iCh].points[iPoint].current, mlConfig.channel_config[iCh].points[iPoint].control_mode, mlConfig.channel_config[iCh].points[iPoint].interpolation_mode );
+				}
+			}
+
+			// the config update went through without errors -> enable the channel
+			mlConfig.enable_channel[iCh] = true;
+		} else {
+			// the channel is not active
+			// update the variables for the ramp-feature
+			if (this->rmInitSettings.MidLevelConfig.SetRampsDuringPeriodicMlUpdateCall){
+				this->rmSettings.MidLevel.ChannelDisabled[iCh] = true;
+				this->rmSettings.MidLevel.UpdateCallsUntilRedoRamp[iCh]--;
+			}
+		}
+	} // for loop
+
+	// Debug
+	if (this->rmInitSettings.DebugConfig.printStimInfos){
+		printf("\n");
+	}
+
+	// SoftStart Feature
+	mlConfig.softstart = this->rmInitSettings.MidLevelConfig.UseSoftStart;
+
+	/*
+	 * Prepare for acks and sequence statistics
+	 */
+	mlConfig.packet_number = GetPackageNumber();
+
+	/*
+	 * Check the configuration and send it
+	 */
+	if (smpt_is_valid_ml_update(&mlConfig)) {
+		// Send the Ll_channel_list command to RehaMove
+		if (smpt_send_ml_update(&(this->Device), &mlConfig)){
+			this->Stats.UpdatesSend++;
+			// copy the stimulation config to make sure we do not send it again
+			memcpy(&this->rmSettings.MidLevel.CurrentMlStimConfig, &this->rmSettings.MidLevel.CurrentMlStimConfigTemp, sizeof(MlUpdateConfig_t));
+			// response is handled in the first response handler
+			// keep alive signal -> set this value to 2 UpdateFunction calls calls, so that we get the information about an electrode error rather sooner than later
+			this->rmSettings.MidLevel.UpdateCallsUntilKeepAliveSignal = 2; //(int32_t)this->rmInitSettings.MidLevelConfig.KeepAliveNumberOfInOutCalls;
+			// lock the acks struct
+			pthread_mutex_lock(&(this->AcksLock_mutex));
+			this->Acks.G_ml_StimActive = false;
+			this->Acks.G_ml_StimError = false;
+			for (uint8_t iCh=0; iCh<REHAMOVE_NUMBER_OF_CHANNELS; iCh++){
+				if (mlConfig.enable_channel[iCh]){
+					this->Acks.G_ml_StimActive = true;
+					break;
+				}
+			}
+			// unlock the acks struct
+			pthread_mutex_unlock(&(this->AcksLock_mutex));
+			return true;
+		} else {
+			// error: failed to send the configuration
+			RehaMove3::printMessage(printMSG_error, "%s Error: The stimulation update could not be send! (time: %0.3f)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
+			return false;
+		}
+	} else {
+		// error: channel configuration is INvalid
+		RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The stimulation update configuration is not valid! (time: %0.3f)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
+		return false;
+	}
+
+	return false;
+}
+
+bool RehaMove3::SendMidLevelKeepAliveSignal(void)
+{
+	// make sure the device is initialised
+	if (!this->rmStatus.DeviceInitialised || !this->rmStatus.DeviceMlIsInitialised){
+		return false;
+	}
+
+	Smpt_ml_get_current_data ml_get_current_data;
+	smpt_clear_ml_get_current_data(&ml_get_current_data);
+
+	ml_get_current_data.data_selection[0] = true;
+	ml_get_current_data.data_selection[1] = true;
+	ml_get_current_data.packet_number = GetPackageNumber();
+
+	// the response is handled in the response handler
+	return smpt_send_ml_get_current_data(&this->Device, &ml_get_current_data);
+}
+
+bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
+{
 	bool ReturnValue = false;
+	if (PulseErrors != NULL){
+		*PulseErrors = 0.0;
+	}
 	// check for ACKs and process them
 	RehaMove3::ReadAcksBlocking();
 	// lock the  sequence queue
-	pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
-
-	uint16_t tempPulseErrors = 0;
-	bool tempSequenceWasComplete = false;
+	pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 
 	// get the last sequence and get the status of that sequence
 	// -> is there a sequence?
-	if (this->SequenceQueue.QueueSize > 0){
+	if (this->LlSequenceQueue.QueueSize > 0){
 		// yes, there is a sequence
 
 		// was the sequence successful ?
-		if (!this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].SequenceWasSuccessful){
+		if (!this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceWasSuccessful){
 			// there was an error -> encode the pulses that did fail
 			// encode the pulse errors
-			for (uint8_t i = 0; i < this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfAcks; i++){
-				if (this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].StimulationPulse[i].Result != Smpt_Result_Successful){
+			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks; i++){
+				if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].StimulationPulse[i].Result != Smpt_Result_Successful){
 					// encode the failed pulses as bits
-					tempPulseErrors |= 0x01 << i;
+					if (PulseErrors != NULL){
+						*PulseErrors = i +1;
+					}
 				}
 			}
 			ReturnValue = false;
 		} else {
-			tempPulseErrors = 0x00;
 			ReturnValue = true;
 		}
 
 		// is the sequence complete ?
-		if (this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfAcks == this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfPulses){
+		if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks == this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfPulses){
 			// yes, this sequence did receive acks for all pulses -> remove the sequence by increasing the QueueTail
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].SequenceNumber = 0;
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].SequenceWasSuccessful = false;
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfPulses = 0;
-			this->SequenceQueue.Queue[this->SequenceQueue.QueueTail].NumberOfAcks = 0;
-			this->SequenceQueue.QueueSize--;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceNumber = 0;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceWasSuccessful = false;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfPulses = 0;
+			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks = 0;
+			this->LlSequenceQueue.QueueSize--;
 			// increase the counter?
-			if (this->SequenceQueue.QueueTail != this->SequenceQueue.QueueHead){
+			if (this->LlSequenceQueue.QueueTail != this->LlSequenceQueue.QueueHead){
 				// yes, increase the counter
-				this->SequenceQueue.QueueTail++;
-				if (this->SequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
-					this->SequenceQueue.QueueTail = 0;
+				this->LlSequenceQueue.QueueTail++;
+				if (this->LlSequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+					this->LlSequenceQueue.QueueTail = 0;
 				}
 			}
-			// optional output
-			tempSequenceWasComplete = true;
 		} else {
 			// no, the sequence did NOT receive acks for all pulses -> wait, maybe the function was called before the stimulator could answer
 
-			RehaMove3::printMessage(printMSG_rmpErrorUnclaimedSequence, "%s Error: The sequence acknowlegment queue contains a sequence with unacknowledged pulses!\n", this->DeviceIDClass);
+			RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The sequence acknowledgement queue contains a sequence with unacknowledged pulses!\n", this->DeviceIDClass);
 			// is there another sequence?
-			if (this->SequenceQueue.QueueSize > 1) {
+			if (this->LlSequenceQueue.QueueSize > 1) {
 				// did this other sequence receive a ack?
-				uint8_t tempQueueElement = this->SequenceQueue.QueueTail +1;
+				uint8_t tempQueueElement = this->LlSequenceQueue.QueueTail +1;
 				if (tempQueueElement >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
 					tempQueueElement = 0;
 				}
-				if ( this->SequenceQueue.Queue[tempQueueElement].NumberOfAcks > 0 ) {
+				if ( this->LlSequenceQueue.Queue[tempQueueElement].NumberOfAcks > 0 ) {
 					// queue end was not reached -> there is a sequence with unacknowledged pulses
-					RehaMove3::printMessage(printMSG_rmpErrorUnclaimedSequence, "     -> There might be undetected errors. Please check your your usage of the RehaMove3 interface class!\n");
+					RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "     -> There might be undetected errors. Please check your your usage of the RehaMove3 interface class!\n");
 				} else {
-					RehaMove3::printMessage(printMSG_rmpErrorUnclaimedSequence, "     -> There might be a delay in the response received by the 'GetLastSequenceResult' function.\n");
+					RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "     -> There might be a delay in the response received by the 'GetLastSequenceResult' function.\n");
 				}
 			} else {
-				RehaMove3::printMessage(printMSG_rmpErrorUnclaimedSequence, "     -> There might be a delay in the response received by the 'GetLastSequenceResult' function.\n");
+				RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "     -> There might be a delay in the response received by the 'GetLastSequenceResult' function.\n");
 			}
 
 			// optional output
-			tempSequenceWasComplete = false;
+			if (PulseErrors != NULL){
+				*PulseErrors = -2;
+			}
 			// no -> return false
 			ReturnValue = false;
 		}
 	} else {
 		// no there is no sequence
 		// is stimulation disabled?
-		if (this->rmpStatus.DoNotStimulate){
+		if (this->rmStatus.DoNotStimulate){
 			// yes, no stimulation -> return false and errors
 			// optional output
-			tempSequenceWasComplete = false;
-			tempPulseErrors = 0xFFFF;
-			// no -> return false
+			if (PulseErrors != NULL){
+				*PulseErrors = -1.0;
+			}
 			ReturnValue = false;
 		} else {
-			// no -> return true because no sequence was send, so this is always successful
-			tempSequenceWasComplete = true;
-			tempPulseErrors = 0x00000;
-			// no -> return false
+			// no -> return true
 			ReturnValue = true;
 		}
 	}
 
 	// unlock the sequence queue
-	pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
 
+	return ReturnValue;
+}
+
+bool RehaMove3::GetLastMidLevelStimulationResult(double *PulseErrors)
+{
+	bool ReturnValue = true;
 	if (PulseErrors != NULL){
-		*PulseErrors = tempPulseErrors;
+		*PulseErrors = 0.0;
 	}
-	if (SequenceWasComplete != NULL){
-		*SequenceWasComplete = tempSequenceWasComplete;
+	// check for ACKs and process them
+	RehaMove3::ReadAcksBlocking();
+	// lock the global ACKs
+	pthread_mutex_lock(&(this->AcksLock_mutex));
+
+	for (uint8_t iCh=0; iCh<REHAMOVE_NUMBER_OF_CHANNELS; iCh++){
+		if (this->Acks.G_ml_current_data_ack.stimulation_data.electrode_error[iCh]){
+			if (PulseErrors != NULL){
+				*PulseErrors = iCh +1;
+			}
+			ReturnValue = false;
+		}
 	}
+
+	// unlock the ACKs
+	pthread_mutex_unlock(&(this->AcksLock_mutex));
+
 	return ReturnValue;
 }
 
 bool RehaMove3::DeInitialiseDevice(bool doPrintInfos, bool doPrintStats)
 {
-	if (this->rmpStatus.InitThreatRunning){
-		this->rmpStatus.InitThreatActive  = false;
+	if (this->rmStatus.InitThreatRunning){
+		this->rmStatus.InitThreatActive  = false;
 	}
-	if (this->rmpStatus.DeviceInitialised) {
-		/*
-		 * LowLevel
-		 */
-		if (this->rmpStatus.DeviceLlIsInitialised){
+	if (this->rmStatus.DeviceInitialised) {
+		if (this->rmStatus.DeviceLlIsInitialised){
+			/*
+			 * LowLevel
+			 */
 			// send the ll_stop command
 			if (smpt_send_ll_stop(&(this->Device), RehaMove3::GetPackageNumber())) {
 				if (RehaMove3::GetResponse(Smpt_Cmd_Ll_Stop_Ack, true, 500) != Smpt_Cmd_Ll_Stop_Ack) {
 					RehaMove3::printMessage(printMSG_error, "%s Error: The device could not be DEinitialised! The LL_Stop acknowledgement is missing!\n", this->DeviceIDClass);
 				} else {
 					// response received -> deinitialise the device
-					this->rmpStatus.DeviceLlIsInitialised = false;
+					this->rmStatus.DeviceLlIsInitialised = false;
 				}
 			} else {
 				RehaMove3::printMessage(printMSG_error, "%s Error: Sending the command %d failed!\n", this->DeviceIDClass, Smpt_Cmd_Ll_Stop_Ack);
-				RehaMove3::CloseSerial(); // todo: einfach schließen??
+				RehaMove3::CloseSerial();
 			}
 			// done
 		}
-
+		if (this->rmStatus.DeviceMlIsInitialised){
+			/*
+			 * MidLevel
+			 */
+			// send the ml_stop command
+			if (smpt_send_ml_stop(&(this->Device), RehaMove3::GetPackageNumber())) {
+				if (RehaMove3::GetResponse(Smpt_Cmd_Ml_Stop_Ack, true, 500) != Smpt_Cmd_Ml_Stop_Ack) {
+					RehaMove3::printMessage(printMSG_error, "%s Error: The device could not be DEinitialised! The ML_Stop acknowledgement is missing!\n", this->DeviceIDClass);
+				} else {
+					// response received -> deinitialise the device
+					this->rmStatus.DeviceMlIsInitialised = false;
+				}
+			} else {
+				RehaMove3::printMessage(printMSG_error, "%s Error: Sending the command %d failed!\n", this->DeviceIDClass, Smpt_Cmd_Ml_Stop_Ack);
+				RehaMove3::CloseSerial();
+			}
+			// done
+		}
 		/*
 		 * General
 		 */
@@ -1109,27 +1577,27 @@ bool RehaMove3::DeInitialiseDevice(bool doPrintInfos, bool doPrintStats)
 			}
 		} else {
 			RehaMove3::printMessage(printMSG_error, "%s Error: Sending the command %d failed!\n", this->DeviceIDClass, Smpt_Cmd_Get_Battery_Status);
-			RehaMove3::CloseSerial(); // todo
+			RehaMove3::CloseSerial();
 		}
 	}
 	//Print status / statistic information
-	RehaMove3::printMessage(printMSG_rmpInitInfo, "%s: DeInitialising the device %s was successful!\n", this->DeviceIDClass, this->DeviceFileName);
+	RehaMove3::printMessage(printMSG_rmInitInfo, "%s: DeInitialising the device %s was successful!\n", this->DeviceIDClass, this->DeviceFileName);
 	RehaMove3::GetCurrentStatus(doPrintInfos,doPrintStats, 0);
 
 	//Close device
 	RehaMove3::CloseSerial();
 	// done -> resets
-	this->rmpStatus.DeviceInitialised = false;
+	this->rmStatus.DeviceInitialised = false;
 	return true;
 }
 
 
-RehaMove3::rmpGetStatus_t RehaMove3::GetCurrentStatus(bool DoPrintStatus, bool DoPrintStatistic, uint16_t WaitTimeout)
+RehaMove3::rmGetStatus_t RehaMove3::GetCurrentStatus(bool DoPrintStatus, bool DoPrintStatistic, uint16_t WaitTimeout)
 {
 	// Check if the class was successfully created
 	if (!this->ClassInstanceInitialised){
 		RehaMove3::printMessage(printMSG_error, "RehaMove3 FAITAL ERROR: The class instance was not successfully initialised!\n");
-		rmpGetStatus_t tempStatus = {};
+		rmGetStatus_t tempStatus = {};
 		memset(&tempStatus, 0, sizeof(tempStatus));
 		return tempStatus;
 	}
@@ -1172,31 +1640,53 @@ RehaMove3::rmpGetStatus_t RehaMove3::GetCurrentStatus(bool DoPrintStatus, bool D
 		uint64_t CurrentTime = (uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0) + 1;
 		// status
 		printf("%s: Status Report\n     -> Interface: %s\n     -> Device ID: %s\n     -> Battery Voltage: %d%% (%0.2fV)\n     -> Last updated: %0.3f seconds ago\n     -> Init Threat running: %s\n     -> Receiver Threat running: %s\n",
-				this->DeviceIDClass, this->DeviceFileName, this->rmpStatus.Device.DeviceID, this->rmpStatus.Device.BatteryLevel, this->rmpStatus.Device.BatteryVoltage, ((double)(CurrentTime - this->rmpStatus.StartTime_ms - this->rmpStatus.LastUpdated))/1000, this->rmpStatus.InitThreatRunning ? "yes":"no", this->rmpStatus.ReceiverThreatRunning ? "yes":"no");
-		printf("     -> LowLevel:\n        -> Initialised: %s\n        -> Current/Last High Voltage: %dV\n        -> Use Denervation: %s\n        -> Abort after N stimulation errors: %d\n        -> Resume the stimulation after: %d sequences\n\n",
-				this->rmpStatus.DeviceLlIsInitialised ? "yes":"no", this->rmpStatus.Device.HighVoltageVoltage, this->rmpSettings.DenervationIsUsed ? "yes":"no", this->rmpSettings.NumberOfErrorsAfterWhichToAbort, this->rmpSettings.NumberOfSequencesAfterWhichToRetestForError);
+				this->DeviceIDClass, this->DeviceFileName, this->rmStatus.Device.DeviceID, this->rmStatus.Device.BatteryLevel, this->rmStatus.Device.BatteryVoltage, ((double)(CurrentTime - this->rmStatus.StartTime_ms - this->rmStatus.LastUpdated))/1000, this->rmStatus.InitThreatRunning ? "yes":"no", this->rmStatus.ReceiverThreatRunning ? "yes":"no");
+		switch (this->rmSettings.CommProtocol){
+		case REHAMOVE_MODE_LOWLEVEL_PREDEDINED:
+		case REHAMOVE_MODE_LOWLEVEL_CUSTOM:
+			printf("     -> LowLevel:\n        -> Initialised: %s\n        -> Current/Last High Voltage: %dV\n        -> Use Denervation: %s\n        -> Abort after %u stimulation errors\n        -> Resume the stimulation after %d sequences\n\n",
+					this->rmStatus.DeviceLlIsInitialised ? "yes":"no", this->rmStatus.Device.HighVoltageVoltage, this->rmInitSettings.LowLevelConfig.UseDenervation ? "yes":"no", this->rmSettings.NumberOfErrorsAfterWhichToAbort, this->rmSettings.NumberOfSequencesAfterWhichToRetestForError);
+			break;
+		case REHAMOVE_MODE_MIDLEVEL:
+			printf("     -> MidLevel:\n        -> Initialised: %s\n        -> Current/Last High Voltage: %dV\n        -> Stimulation Frequency: %2.2fHz; (Change the frequency dynamically: %s)\n        -> Send KeepAlive Signal via periodic MidLevelUpdate call: %s; (Number of calls between updates: %2.0f)\n        -> Do a SoftStart: %s\n        -> Ramp up the Stimulation intensity: %s (For %1.0f pulses; Redo after %1.0f zero updates; Set via periodic Update call: %s)\n        -> Abort after %u stimulation errors\n        -> Resume the stimulation after %d stimulation updates\n\n",
+								this->rmStatus.DeviceMlIsInitialised ? "yes":"no", this->rmStatus.Device.HighVoltageVoltage, this->rmInitSettings.MidLevelConfig.GeneralStimFrequency,  this->rmInitSettings.MidLevelConfig.UseDynamicStimulationFrequncy ? "yes":"no",
+										this->rmInitSettings.MidLevelConfig.SendKeepAliveSignalDuringPeriodicMlUpdateCall ? "yes":"no", this->rmInitSettings.MidLevelConfig.KeepAliveNumberOfUpdateCalls,
+										this->rmInitSettings.MidLevelConfig.UseSoftStart ? "yes":"no", this->rmInitSettings.MidLevelConfig.UseRamps ? "yes":"no", this->rmInitSettings.MidLevelConfig.RampsUpdates, this->rmInitSettings.MidLevelConfig.RampsZeroUpdates, this->rmInitSettings.MidLevelConfig.SetRampsDuringPeriodicMlUpdateCall ? "yes":"no",
+										this->rmSettings.NumberOfErrorsAfterWhichToAbort, this->rmSettings.NumberOfSequencesAfterWhichToRetestForError);
+			break;
+		}
 	}
 	// print the statistics to the terminal?
 	if (DoPrintStatistic){
 		// statistic
-		printf("%s: Statistic Report\n     -> Pulse SEQUENCES send: %lu (%lu pulses send; %lu pulses NOT send)\n        -> Successful: %lu (%lu pulses)\n        -> Unsuccessful: %lu (%lu pulses)\n           -> Stimulation Error: %lu\n        -> Missing: %lu\n",
-						this->DeviceIDClass, this->Stats.SequencesSend, this->Stats.StimultionPulsesSend, this->Stats.StimultionPulsesNotSend, this->Stats.SequencesSuccessful, this->Stats.StimultionPulsesSuccessful, this->Stats.SequencesFailed, this->Stats.StimultionPulsesFailed, this->Stats.SequencesFailed_StimError,
-						(this->Stats.SequencesSend - (this->Stats.SequencesSuccessful + this->Stats.SequencesFailed)) );
+		switch (this->rmSettings.CommProtocol){
+		case REHAMOVE_MODE_LOWLEVEL_PREDEDINED:
+		case REHAMOVE_MODE_LOWLEVEL_CUSTOM:
+			printf("%s: Statistic Report LowLevel:\n     -> Pulse SEQUENCES send: %lu (%lu pulses send; %lu pulses NOT send)\n        -> Successful: %lu (%lu pulses)\n        -> Unsuccessful: %lu (%lu pulses)\n           -> Stimulation Error: %lu\n        -> Missing: %lu\n",
+					this->DeviceIDClass, this->Stats.SequencesSend, this->Stats.StimultionPulsesSend, this->Stats.StimultionPulsesNotSend, this->Stats.SequencesSuccessful,
+					this->Stats.StimultionPulsesSuccessful, this->Stats.SequencesFailed, this->Stats.StimultionPulsesFailed, this->Stats.SequencesFailed_StimError,	(this->Stats.SequencesSend - (this->Stats.SequencesSuccessful + this->Stats.SequencesFailed)) );
+			break;
+		case REHAMOVE_MODE_MIDLEVEL:
+			printf("%s: Statistic Report MidLevel:\n     -> Updates send: %lu\n        -> Stimulation Errors: %lu\n",
+								this->DeviceIDClass, this->Stats.UpdatesSend, this->Stats.UpdatesFailed_StimError );
+			break;
+		}
+
 		printf("     -> Input Corrections:\n        -> Invalid Input: %lu pulses\n        -> Current correction (to high): %u pulses\n        -> Current correction (to low):  %u pulses\n        -> Pulsewidth correction (to high): %u pulses\n        -> Pulsewidth correction (to low):  %u pulses\n",
 				this->Stats.InvalidInput, this->Stats.InputCorrections_CurrentOver, this->Stats.InputCorrections_CurrentUnder, this->Stats.InputCorrections_PulswidthOver, this->Stats.InputCorrections_PulswidthUnder);
 	}
 
-	rmpGetStatus_t CurrentState = {};
-	CurrentState.DeviceIsOpen = this->rmpStatus.DeviceIsOpen;
-	CurrentState.DeviceLlIsInitialised = this->rmpStatus.DeviceLlIsInitialised;
-	CurrentState.DeviceMlIsInitialised = this->rmpStatus.DeviceMlIsInitialised;
-	CurrentState.DeviceInitialised     = this->rmpStatus.DeviceInitialised;
-	CurrentState.LastUpdated        = this->rmpStatus.LastUpdated;
-	CurrentState.DoNotStimulate     = this->rmpStatus.DoNotStimulate;
-	CurrentState.NumberOfStimErrors = this->rmpStatus.NumberOfStimErrors;
-	CurrentState.BatteryLevel       = this->rmpStatus.Device.BatteryLevel;
-	CurrentState.BatteryVoltage     = this->rmpStatus.Device.BatteryVoltage;
-	CurrentState.HighVoltageVoltage = this->rmpStatus.Device.HighVoltageVoltage;
+	rmGetStatus_t CurrentState = {};
+	CurrentState.DeviceIsOpen = this->rmStatus.DeviceIsOpen;
+	CurrentState.DeviceLlIsInitialised = this->rmStatus.DeviceLlIsInitialised;
+	CurrentState.DeviceMlIsInitialised = this->rmStatus.DeviceMlIsInitialised;
+	CurrentState.DeviceInitialised     = this->rmStatus.DeviceInitialised;
+	CurrentState.LastUpdated        = this->rmStatus.LastUpdated;
+	CurrentState.DoNotStimulate     = this->rmStatus.DoNotStimulate;
+	CurrentState.NumberOfStimErrors = this->rmStatus.NumberOfStimErrors;
+	CurrentState.BatteryLevel       = this->rmStatus.Device.BatteryLevel;
+	CurrentState.BatteryVoltage     = this->rmStatus.Device.BatteryVoltage;
+	CurrentState.HighVoltageVoltage = this->rmStatus.Device.HighVoltageVoltage;
 	// return the current status
 	return CurrentState;
 }
@@ -1204,7 +1694,7 @@ RehaMove3::rmpGetStatus_t RehaMove3::GetCurrentStatus(bool DoPrintStatus, bool D
 
 bool RehaMove3::DoDeviceReset(void)
 {
-	if (this->rmpStatus.DeviceIsOpen){
+	if (this->rmStatus.DeviceIsOpen){
 		// close and open the device
 		RehaMove3::CloseSerial();
 		RehaMove3::OpenSerial();
@@ -1245,24 +1735,24 @@ bool RehaMove3::OpenSerial()
 		// serial interface exists
 		if (smpt_open_serial_port(&(this->Device), this->DeviceFileName)) {
 			// opening successful
-			RehaMove3::printMessage(printMSG_rmpDeviceInfo, "RehaMove3 DEBUG: Device %s opened successfully.\n", this->DeviceFileName);
-			this->rmpStatus.DeviceIsOpen = true;
+			RehaMove3::printMessage(printMSG_rmDeviceInfo, "RehaMove3 DEBUG: Device %s opened successfully.\n", this->DeviceFileName);
+			this->rmStatus.DeviceIsOpen = true;
 			/*
 			 *  Start the receiver threat
 			 */
-			if (this->rmpSettings.UseThreadForAcks){
-				this->rmpStatus.ReceiverThreatActive = true;
+			if (this->rmSettings.UseThreadForAcks){
+				this->rmStatus.ReceiverThreatActive = true;
 				if (pthread_create(&(this->ReceiverThread), NULL, ReceiverThreadFunc, (void *)this) != 0) {
 					RehaMove3::printMessage(printMSG_error, "%s Error: The receiver threat could net be started:\n     -> %s (%d)\n", this->DeviceIDClass, strerror(errno), errno);
 					RehaMove3::CloseSerial();
 					return false;
 				}
-				RehaMove3::printMessage(printMSG_rmpDeviceInfo, "RehaMove3 DEBUG: Starting the receiver threat was successfully.\n");
+				RehaMove3::printMessage(printMSG_rmDeviceInfo, "RehaMove3 DEBUG: Starting the receiver threat was successfully.\n");
 			}
 			// done
 			return true;
 		} else {
-			RehaMove3::printMessage(printMSG_rmpDeviceInfo, "RehaMove3 DEBUG: Device %s opening failed.\n", this->DeviceFileName);
+			RehaMove3::printMessage(printMSG_rmDeviceInfo, "RehaMove3 DEBUG: Device %s opening failed.\n", this->DeviceFileName);
 			// opening failed
 			return false;
 		}
@@ -1274,34 +1764,34 @@ bool RehaMove3::OpenSerial()
 
 bool RehaMove3::CloseSerial()
 {
-	if (this->rmpStatus.DeviceIsOpen) {
-		if (this->rmpStatus.InitThreatRunning) {
-			this->rmpStatus.InitThreatActive = false;
+	if (this->rmStatus.DeviceIsOpen) {
+		if (this->rmStatus.InitThreatRunning) {
+			this->rmStatus.InitThreatActive = false;
 		}
-		if (this->rmpStatus.ReceiverThreatRunning) {
-			this->rmpStatus.ReceiverThreatActive = false;
+		if (this->rmStatus.ReceiverThreatRunning) {
+			this->rmStatus.ReceiverThreatActive = false;
 		}
-		if (this->rmpStatus.InitThreatRunning) {
+		if (this->rmStatus.InitThreatRunning) {
 			//what for the init threat to stop
 			do {
 				usleep(500);
-			} while (this->rmpStatus.InitThreatRunning);
+			} while (this->rmStatus.InitThreatRunning);
 		}
-		if (this->rmpStatus.ReceiverThreatRunning) {
+		if (this->rmStatus.ReceiverThreatRunning) {
 			//what for the receiver threat to stop
 			do {
 				usleep(500);
-			} while (this->rmpStatus.ReceiverThreatRunning);
+			} while (this->rmStatus.ReceiverThreatRunning);
 		}
 
 		if (smpt_close_serial_port(&(this->Device))) {
-			this->rmpStatus.DeviceIsOpen = false;
+			this->rmStatus.DeviceIsOpen = false;
 			return true;
 		} else {
 			return false;
 		}
 	} else {
-		this->rmpStatus.DeviceIsOpen = false;
+		this->rmStatus.DeviceIsOpen = false;
 		return true;
 	}
 }
@@ -1313,14 +1803,14 @@ bool RehaMove3::CheckSupportedVersion(const uint8_t SupportedVersions[][3], Smpt
 	*printError = false;
 
 	uint8_t NumberOfSupportedVersions = 0;
-	if (SupportedVersions == RMP_SupportedVersionsMain){
-		NumberOfSupportedVersions = RMP_NumberOfSupportedVersionsMain;
+	if (SupportedVersions == RM3_SupportedVersionsMain){
+		NumberOfSupportedVersions = RM3_NumberOfSupportedVersionsMain;
 	}
-	if (SupportedVersions == RMP_SupportedVersionsStim){
-		NumberOfSupportedVersions = RMP_NumberOfSupportedVersionsStim;
+	if (SupportedVersions == RM3_SupportedVersionsStim){
+		NumberOfSupportedVersions = RM3_NumberOfSupportedVersionsStim;
 	}
-	if (SupportedVersions == RMP_SupportedVersionsSMPT){
-		NumberOfSupportedVersions = RMP_NumberOfSupportedVersionsSMPT;
+	if (SupportedVersions == RM3_SupportedVersionsSMPT){
+		NumberOfSupportedVersions = RM3_NumberOfSupportedVersionsSMPT;
 	}
 
 	uint8_t  iErrorSmallest = 255;
@@ -1346,7 +1836,7 @@ bool RehaMove3::CheckSupportedVersion(const uint8_t SupportedVersions[][3], Smpt
 	}
 
 	// error or warning?
-	if (iErrorSmallest > RMP_ErrorWarningBand){
+	if (iErrorSmallest > RM3_ErrorWarningBand){
 		*printError = true;
 	} else {
 		*printWarning = true;
@@ -1371,10 +1861,10 @@ bool RehaMove3::CheckChannel(uint8_t Channel_IN) {
 }
 
 uint16_t RehaMove3::CheckAndCorrectPulsewidth(int PulseWidthIN, bool *Corrected) {
-	if (PulseWidthIN > this->rmpSettings.MaxPulseWidth) {
+	if (PulseWidthIN > this->rmSettings.MaxPulseWidth) {
 		this->Stats.InputCorrections_PulswidthOver++;
 		*Corrected = true;
-		return this->rmpSettings.MaxPulseWidth;
+		return this->rmSettings.MaxPulseWidth;
 	} else if (PulseWidthIN < 0) {
 		this->Stats.InputCorrections_PulswidthUnder++;
 		*Corrected = true;
@@ -1386,14 +1876,14 @@ uint16_t RehaMove3::CheckAndCorrectPulsewidth(int PulseWidthIN, bool *Corrected)
 
 float RehaMove3::CheckAndCorrectCurrent(float CurrentIN, bool *Corrected)
 {
-	if (CurrentIN > this->rmpSettings.MaxCurrent) {
+	if (CurrentIN > this->rmSettings.MaxCurrent) {
 		this->Stats.InputCorrections_CurrentOver++;
 		*Corrected = true;
-		return this->rmpSettings.MaxCurrent;
-	} else if (CurrentIN < -1*this->rmpSettings.MaxCurrent) {
+		return this->rmSettings.MaxCurrent;
+	} else if (CurrentIN < -1*this->rmSettings.MaxCurrent) {
 		this->Stats.InputCorrections_CurrentUnder++;
 		*Corrected = true;
-		return -1*this->rmpSettings.MaxCurrent;
+		return -1*this->rmSettings.MaxCurrent;
 	} else {
 		float temp = CurrentIN -floorf(CurrentIN);
 		// check if the current is x.0 or x.5
@@ -1443,7 +1933,7 @@ uint8_t RehaMove3::GetMinimalCurrentPulse(uint16_t *PulseWidth, float *Current, 
 
 inline void RehaMove3::ReadAcksBlocking(void)
 {
-	if (!this->rmpSettings.UseThreadForAcks){
+	if (!this->rmSettings.UseThreadForAcks){
 		RehaMove3::ReadAcks();
 	}
 }
@@ -1456,12 +1946,14 @@ bool RehaMove3::ReadAcks(void)
     	RehaMove3::printMessage(printMSG_error, "%s Error: The ReadAcks function is looked: %s (%d)\n", this->DeviceIDClass, strerror(retValue), retValue);
         return false;
     }
-    this->rmpStatus.ReceiverThreatRunning = true;
+    this->rmStatus.ReceiverThreatRunning = true;
 
 	Smpt_get_main_status_ack 	GeneralMainStatusAck;
 	Smpt_get_stim_status_ack 	GeneralStimStatusAck;
 	Smpt_get_battery_status_ack GeneralBatteryStatusAck;
-	Smpt_ll_channel_config_ack 	ChannelAck;
+	Smpt_ll_channel_config_ack 	 LlChannelAck;
+	bool						 MlStimActive;
+	Smpt_ml_get_current_data_ack MlCurrentDataAck;
 
 	struct timeval 				time;
     SingleResponse_t 			Response;
@@ -1479,7 +1971,7 @@ bool RehaMove3::ReadAcks(void)
 			smpt_clear_ack(&(Response.Ack));
 			smpt_last_ack(&(this->Device), &(Response.Ack));
 			// debug output
-			RehaMove3::printMessage(printMSG_rmpReceiveACK, "%s DEBUG: Response received\n   -> Ack: %i; Result: %i; Package Number: %i\n", this->DeviceIDClass, Response.Ack.command_number, Response.Ack.result, Response.Ack.packet_number);
+			RehaMove3::printMessage(printMSG_rmReceiveACK, "%s DEBUG: Response received\n   -> Ack: %i; Result: %i; Package Number: %i\n", this->DeviceIDClass, Response.Ack.command_number, Response.Ack.result, Response.Ack.packet_number);
 
 			/*
 			 * Error Handler 1, handle the error code as soon as the error comes in, otherwise handle the error in the response queue
@@ -1542,11 +2034,11 @@ bool RehaMove3::ReadAcks(void)
 				/* Writes the received data into battery_status_ack */
 				smpt_get_get_battery_status_ack(&(this->Device), &GeneralBatteryStatusAck);
 				// save the current status
-				this->rmpStatus.Device.BatteryLevel = GeneralBatteryStatusAck.battery_level;
-				this->rmpStatus.Device.BatteryVoltage = ((float)GeneralBatteryStatusAck.battery_voltage) / 1000.0;
+				this->rmStatus.Device.BatteryLevel = GeneralBatteryStatusAck.battery_level;
+				this->rmStatus.Device.BatteryVoltage = ((float)GeneralBatteryStatusAck.battery_voltage) / 1000.0;
 				// save the current time
 				gettimeofday(&time,NULL);
-				this->rmpStatus.LastUpdated = ((uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0)) - this->rmpStatus.StartTime_ms;
+				this->rmStatus.LastUpdated = ((uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0)) - this->rmStatus.StartTime_ms;
 				// the response is handled -> do not add this response to the response queue
 				continue;
 				break;
@@ -1557,10 +2049,10 @@ bool RehaMove3::ReadAcks(void)
 				/* Writes the received data into main_status_ack */
 				smpt_get_get_main_status_ack(&(this->Device), &GeneralMainStatusAck);
 				// save the current status
-				this->rmpStatus.Device.MainStatus = GeneralMainStatusAck.main_status;
+				this->rmStatus.Device.MainStatus = GeneralMainStatusAck.main_status;
 				// save the current time
 				gettimeofday(&time,NULL);
-				this->rmpStatus.LastUpdated = ((uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0)) - this->rmpStatus.StartTime_ms;
+				this->rmStatus.LastUpdated = ((uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0)) - this->rmStatus.StartTime_ms;
 				// the response is handled -> do not add this response to the response queue
 				continue;
 				break;
@@ -1571,35 +2063,35 @@ bool RehaMove3::ReadAcks(void)
 				/* Writes the received data into stim_status_ack */
 				smpt_get_get_stim_status_ack(&(this->Device), &GeneralStimStatusAck);
 				// save the current status
-				this->rmpStatus.Device.StimStatus = GeneralStimStatusAck.stim_status;
-				this->rmpStatus.Device.HighVoltageLevel = GeneralStimStatusAck.high_voltage_level;
-				switch (this->rmpStatus.Device.HighVoltageLevel){
+				this->rmStatus.Device.StimStatus = GeneralStimStatusAck.stim_status;
+				this->rmStatus.Device.HighVoltageLevel = GeneralStimStatusAck.high_voltage_level;
+				switch (this->rmStatus.Device.HighVoltageLevel){
 				case Smpt_High_Voltage_Default:
 				case Smpt_High_Voltage_150V:
-					this->rmpStatus.Device.HighVoltageVoltage = 150;
+					this->rmStatus.Device.HighVoltageVoltage = 150;
 					break;
 				case Smpt_High_Voltage_120V:
-					this->rmpStatus.Device.HighVoltageVoltage = 120;
+					this->rmStatus.Device.HighVoltageVoltage = 120;
 					break;
 				case Smpt_High_Voltage_90V:
-					this->rmpStatus.Device.HighVoltageVoltage = 90;
+					this->rmStatus.Device.HighVoltageVoltage = 90;
 					break;
 				case Smpt_High_Voltage_60V:
-					this->rmpStatus.Device.HighVoltageVoltage = 60;
+					this->rmStatus.Device.HighVoltageVoltage = 60;
 					break;
 				case Smpt_High_Voltage_30V:
-					this->rmpStatus.Device.HighVoltageVoltage = 30;
+					this->rmStatus.Device.HighVoltageVoltage = 30;
 					break;
 				case Smpt_High_Voltage_Off:
-					this->rmpStatus.Device.HighVoltageVoltage = 0;
+					this->rmStatus.Device.HighVoltageVoltage = 0;
 					break;
 				default:
 					RehaMove3::printMessage(printMSG_error, "%s Error: An invalid option for the 'high voltage' setting was returned: %d!\n     -> Please check library version and this implementation!\n",
-							this->DeviceIDClass, this->rmpStatus.Device.HighVoltageLevel);
+							this->DeviceIDClass, this->rmStatus.Device.HighVoltageLevel);
 				}
 				// save the current time
 				gettimeofday(&time,NULL);
-				this->rmpStatus.LastUpdated = ((uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0)) - this->rmpStatus.StartTime_ms;
+				this->rmStatus.LastUpdated = ((uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0)) - this->rmStatus.StartTime_ms;
 				// the response is handled -> do not add this response to the response queue
 				continue;
 				break;
@@ -1621,22 +2113,55 @@ bool RehaMove3::ReadAcks(void)
 
 			case Smpt_Cmd_Ll_Channel_Config_Ack: // PC <- stimulator smpt_get_ll_ch_config_ack()
 				// Get the channel configuration response
-				smpt_clear_ll_channel_config_ack(&ChannelAck);
+				smpt_clear_ll_channel_config_ack(&LlChannelAck);
 				// Writes the received data into ll_channel_config_ack
-				smpt_get_ll_channel_config_ack(&(this->Device), &ChannelAck);
+				smpt_get_ll_channel_config_ack(&(this->Device), &LlChannelAck);
 				// push the result into the sequence queue
-				RehaMove3::PutChannelResponse(ChannelAck.packet_number, ChannelAck.result, ChannelAck.electrode_error);
+				RehaMove3::PutLLChannelResponse(LlChannelAck.packet_number, LlChannelAck.result, LlChannelAck.electrode_error);
 				// the response is handled -> do not add this response to the response queue
 				continue;
 				break;
 
 			case Smpt_Cmd_Ll_Stop_Ack:       // PC <- stimulator smpt_last_ack()
 				// update the internal status
-				// this->rmpStatus.IsInitialised_LowLevel = false; -> done by the deinitalise function
+				// this->rmStatus.IsInitialised_LowLevel = false; -> done by the deinitalise function
+				break;
+
+			/*
+			 * MidLevel commands
+			 */
+			case Smpt_Cmd_Ml_Init_Ack: // PC <- stimulator stimulator smpt_last_ack()
+				break;
+
+			case Smpt_Cmd_Ml_Update_Ack: // PC <- stimulator stimulator smpt_last_ack()
+				// the response is handled -> do not add this response to the response queue
+				continue;
+				break;
+
+			case Smpt_Cmd_Ml_Get_Current_Data_Ack: // PC <- stimulator smpt_get_ll_ch_config_ack()
+				// Get the current data response
+				smpt_clear_ml_get_current_data_ack(&MlCurrentDataAck);
+				// Writes the received data into ml_get_current_data_ack
+				smpt_get_ml_get_current_data_ack(&(this->Device), &MlCurrentDataAck);
+				// lock the acks struct
+				pthread_mutex_lock(&(this->AcksLock_mutex));
+				MlStimActive = this->Acks.G_ml_StimActive;
+				// Writes the received data into global ACK struct
+				memcpy(&this->Acks.G_ml_current_data_ack, &MlCurrentDataAck, sizeof(Smpt_ml_get_current_data_ack));
+				// unlock the acks struct
+				pthread_mutex_unlock(&(this->AcksLock_mutex));
+				RehaMove3::PutMlCurrentState(&MlCurrentDataAck, MlStimActive);
+				// the response is handled -> do not add this response to the response queue
+				continue;
+				break;
+
+			case Smpt_Cmd_Ml_Stop_Ack:       // PC <- stimulator smpt_last_ack()
+				// update the internal status
+				// this->rmStatus.IsInitialised_MidLevel = false; -> done by the deinitalise function
 				break;
 
 
-			// Unknown error
+				// Unknown error
 			case Smpt_Cmd_Unknown_Cmd: // PC <- stimulator: The stimulator sends this cmd, if the received cmd can not be processed / is unknown.
 				RehaMove3::printMessage(printMSG_error, "%s Error: An unknown command was send to the stimulator!\n", this->DeviceIDClass);
 				break;
@@ -1653,14 +2178,14 @@ bool RehaMove3::ReadAcks(void)
 		} else {
 			// no new responses available -> sleep
 			PackageReceived = false;
-			if (this->rmpSettings.UseThreadForAcks){
+			if (this->rmSettings.UseThreadForAcks){
 				usleep(REHAMOVE_ACK_THREAD_DELAY_US);
 			}
 		}
-	} while (PackageReceived || this->rmpStatus.ReceiverThreatActive); // do loop
+	} while (PackageReceived || this->rmStatus.ReceiverThreatActive); // do loop
 
 	// done
-	this->rmpStatus.ReceiverThreatRunning = false;
+	this->rmStatus.ReceiverThreatRunning = false;
 	// UnLock the function
     pthread_mutex_unlock(&(this->ReadPackage_mutex));
 	return true;
@@ -1703,7 +2228,7 @@ void RehaMove3::PutResponse(SingleResponse_t *Response)
 		// the response was expected -> add the response to the queue
 		memcpy(&(this->ResponseQueue.Queue[QueueEntry].Ack), &(Response->Ack), sizeof(Response->Ack));
 		this->ResponseQueue.Queue[QueueEntry].Error = false;
-		if (Response->Error){ // TODO
+		if (Response->Error){
 			this->ResponseQueue.Queue[QueueEntry].Error = true;
 			memcpy(&(this->ResponseQueue.Queue[QueueEntry].ErrorDescription), &(Response->ErrorDescription), sizeof(Response->ErrorDescription));
 		}
@@ -1733,16 +2258,15 @@ void RehaMove3::PutResponse(SingleResponse_t *Response)
     // successfully finished
 }
 
-// TODO:  Rückgabewerte -> noch akutelles TODO?
 int RehaMove3::GetResponse(Smpt_Cmd ExpectedCommand, bool AddExpectedResponse, int MilliSecondsToWait)
 {
 	struct timeval TStart = {}, TStop = {};
 	double StartTime = 0, EndTime = 0;
 
-	if (this->rmpInitSettings.DebugConfig.printSendCmdInfos){
+	if (this->rmInitSettings.DebugConfig.printSendCmdInfos){
 		gettimeofday(&TStart,NULL);
 		StartTime = (double)(TStart.tv_sec*1000.0) + (double)(TStart.tv_usec/1000.0);
-		RehaMove3::printMessage(printMSG_rmpSendCMD, "%s DEBUG: Command send for ACK %u\n", this->DeviceIDClass, ExpectedCommand);
+		RehaMove3::printMessage(printMSG_rmSendCMD, "%s DEBUG: Command send for ACK %u\n", this->DeviceIDClass, ExpectedCommand);
 	}
 
 	// input checks
@@ -1826,7 +2350,7 @@ int RehaMove3::GetResponse(Smpt_Cmd ExpectedCommand, bool AddExpectedResponse, i
 			TimeNow = (uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0);
 			TimeToWait = MilliSecondsToWait - (int)(TimeNow - TimeStart);
 		}
-		if (this->rmpStatus.InitThreatRunning && !this->rmpStatus.InitThreatActive){
+		if (this->rmStatus.InitThreatRunning && !this->rmStatus.InitThreatActive){
 			TimeToWait = 0;
 		}
 	} while (TimeToWait > 0);
@@ -1929,87 +2453,87 @@ int RehaMove3::GetResponse(Smpt_Cmd ExpectedCommand, bool AddExpectedResponse, i
 	}
 
 	// done
-	if (this->rmpInitSettings.DebugConfig.printSendCmdInfos){
+	if (this->rmInitSettings.DebugConfig.printSendCmdInfos){
 		gettimeofday(&TStop,NULL);
 		EndTime = (double)(TStop.tv_sec*1000.0) + (double)(TStop.tv_usec/1000.0);
-		RehaMove3::printMessage(printMSG_rmpSendCMD, "   -> ACK %u needed %f ms to finish\n", Response.Request, (EndTime - StartTime));
+		RehaMove3::printMessage(printMSG_rmSendCMD, "   -> ACK %u needed %f ms to finish\n", Response.Request, (EndTime - StartTime));
 	}
 	return (int) ExpectedCommand;
 }
 
 
-void RehaMove3::PutChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber)
+void RehaMove3::PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber)
 {
 	/*
 	 * Add the expected stimulation response to the queue
 	 */
 	// lock the queue
-	pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 
 	// add a new sequence or add a pulse to the last one?
-	if (this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].SequenceNumber != SequenceNumber){
+	if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceNumber != SequenceNumber){
 		// yes, this a new sequence
 		// increase the counter?
-		if (this->SequenceQueue.QueueSize != 0){
-			this->SequenceQueue.QueueHead++;
-			if (this->SequenceQueue.QueueHead >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
-				this->SequenceQueue.QueueHead = 0;
+		if (this->LlSequenceQueue.QueueSize != 0){
+			this->LlSequenceQueue.QueueHead++;
+			if (this->LlSequenceQueue.QueueHead >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+				this->LlSequenceQueue.QueueHead = 0;
 			}
-			if (this->SequenceQueue.QueueHead == this->SequenceQueue.QueueTail) {
+			if (this->LlSequenceQueue.QueueHead == this->LlSequenceQueue.QueueTail) {
 				// queue end was overrun -> we lose data
-				if (!this->SequenceQueue.DoNotReportUnclaimedSequenceResults){
+				if (!this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults){
 					RehaMove3::printMessage(printMSG_error, "%s Error: The sequence acknowlegement queue did overflow!\n     -> The oldest sequence will be discarded.\n     -> This might happen, because the sequence acknowlegements are not pulled!\n     -> This is the ONLY message about the error!\n", this->DeviceIDClass);
 					// show this warning only once
-					this->SequenceQueue.DoNotReportUnclaimedSequenceResults = true;
+					this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults = true;
 				}
-				this->SequenceQueue.QueueTail++;
-				if (this->SequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
-					this->SequenceQueue.QueueTail = 0;
+				this->LlSequenceQueue.QueueTail++;
+				if (this->LlSequenceQueue.QueueTail >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+					this->LlSequenceQueue.QueueTail = 0;
 				}
 			}
 		}
 		// clear the sequence and set the defaults
-		this->SequenceQueue.QueueSize++;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses = 0;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfAcks = 0;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].SequenceNumber = SequenceNumber;
-		this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].SequenceWasSuccessful = false;
+		this->LlSequenceQueue.QueueSize++;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses = 0;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfAcks = 0;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceNumber = SequenceNumber;
+		this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceWasSuccessful = false;
 	}
 
 	// add the response expectation to the queue
-	this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].StimulationPulse[this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses].Channel = Channel;
-	this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].StimulationPulse[this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses].PackageNumber = PackageNumber;
-	this->SequenceQueue.Queue[this->SequenceQueue.QueueHead].NumberOfPulses++;
+	this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].StimulationPulse[this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses].Channel = Channel;
+	this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].StimulationPulse[this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses].PackageNumber = PackageNumber;
+	this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].NumberOfPulses++;
 
 	// unlock the queue
-	pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
 }
 
-void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError)
+void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError)
 {
 	/*
 	 * Update the expected stimulation response with the response
 	 */
 	// lock the queue
-	pthread_mutex_lock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 
 	// search backwards for the last stimulation pulse with no ack ( and were the package number match )
 	bool DoSearch = true, PulseFound = false;
-	int16_t SequenceQueuePointer = this->SequenceQueue.QueueHead;
+	int16_t LlSequenceQueuePointer = this->LlSequenceQueue.QueueHead;
 	uint8_t PulsePointer = 0;
 
 	while(DoSearch){
 		// is this sequence complete?
 		/*
-		if (this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfAcks != this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfPulses) {
+		if (this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfAcks != this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfPulses) {
 			// no -> so this ACK must be for the first pulse without an ack, which is the pulse NumberOfAcks because of the 0 index
-			PulsePointer = this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfAcks;
+			PulsePointer = this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfAcks;
 			DoSearch = false;
 			PulseFound = true;
 		}
 		*/
-		for (uint8_t i = 0; i < this->SequenceQueue.Queue[SequenceQueuePointer].NumberOfPulses; i++){
-			if ( this->SequenceQueue.Queue[SequenceQueuePointer].StimulationPulse[i].PackageNumber == PackageNumber){
+		for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfPulses; i++){
+			if ( this->LlSequenceQueue.Queue[LlSequenceQueuePointer].StimulationPulse[i].PackageNumber == PackageNumber){
 				// the package number match -> this is the pulse we got a response for
 				PulsePointer = i;
 				DoSearch = false;
@@ -2020,13 +2544,13 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 
 		if (DoSearch){
 			// the pulse was not found in the last sequence -> look in the sequence before
-			SequenceQueuePointer--;
-			if (SequenceQueuePointer < 0){
-				SequenceQueuePointer = REHAMOVE_SEQUENCE_QUEUE_SIZE;
+			LlSequenceQueuePointer--;
+			if (LlSequenceQueuePointer < 0){
+				LlSequenceQueuePointer = REHAMOVE_SEQUENCE_QUEUE_SIZE;
 			}
-			if (SequenceQueuePointer < this->SequenceQueue.QueueTail) {
+			if (LlSequenceQueuePointer < this->LlSequenceQueue.QueueTail) {
 				// queue end is reached and no pulse was found -> this should not happen ...
-				RehaMove3::printMessage(printMSG_rmpErrorUnclaimedSequence, "%s Error: The received acknowledgement for a stimulation pulse could not be found in the sequence queue!\n     -> Package Number: %d\n     -> Result: %s\n     -> Channel Error: %d\n",
+				RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The received acknowledgement for a stimulation pulse could not be found in the sequence queue!\n     -> Package Number: %d\n     -> Result: %s\n     -> Channel Error: %d\n",
 					this->DeviceIDClass, PackageNumber, RehaMove3::GetResultString(Result), ChannelError);
 				DoSearch = false;
 			}
@@ -2035,8 +2559,8 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 
 	// update the found pulse
 	if (PulseFound){
-		this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfAcks++;
-		this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[PulsePointer].Result = (uint8_t)Result;
+		this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks++;
+		this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[PulsePointer].Result = (uint8_t)Result;
 		// check the result
 		switch (Result){
 		case Smpt_Result_Successful:
@@ -2049,19 +2573,19 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 			this->Stats.StimultionPulsesFailed_StimError++;
 			break;
 		default:
-			RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutChannelResponse'\n", this->DeviceIDClass, Result);
+			RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutLLChannelResponse'\n", this->DeviceIDClass, Result);
 		}
 
 		// was this the last pulse of this sequence?
-		if (this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfAcks == this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfPulses){
+		if (this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks == this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfPulses){
 			bool SequenceWasSuccessful = true, StimErrorsOccurred = false;
 			char ErrorString[1000], tempString[150];
 			memset(ErrorString, 0, sizeof(ErrorString));
 
 			// make sure every pulse within the sequence was successful
-			for (uint8_t i = 0; i < this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].NumberOfAcks; i++) {
+			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks; i++) {
 
-				switch (this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[i].Result){
+				switch (this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Result){
 				case Smpt_Result_Successful:
 					// stimulation pulse was successful -> end now
 					//this->Stats.StimultionPulsesSuccessful++;
@@ -2073,7 +2597,7 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 					//this->Stats.StimultionPulsesFailed++;
 					//this->Stats.StimultionPulsesFailed_StimError++;
 					snprintf(tempString, sizeof(tempString), "   -> Electrode Error => Pulse Number: %d; Channel: %d (%s)\n",
-							(i+1), ((int8_t)this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[i].Channel+1), RehaMove3::GetChannelNameString((Smpt_Channel)this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].StimulationPulse[i].Channel));
+							(i+1), ((int8_t)this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Channel+1), RehaMove3::GetChannelNameString((Smpt_Channel)this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Channel));
 					strcat(ErrorString, tempString);
 					break;
 
@@ -2081,7 +2605,7 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 					SequenceWasSuccessful = false;
 					snprintf(ErrorString, sizeof(ErrorString), "%s     -> UNDEFINED Error => Pulse Number: %d; Channel: %d (%s) Result: %d\n",
 							ErrorString, (PulsePointer+1), ((int8_t)ChannelError+1), RehaMove3::GetChannelNameString(ChannelError), Result);
-					RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutChannelResponse'\n", this->DeviceIDClass, Result);
+					RehaMove3::printMessage(printMSG_error,"%s Error: the result code %d is not handled in function 'PutLLChannelResponse'\n", this->DeviceIDClass, Result);
 				}
 
 			} // end for loop
@@ -2089,30 +2613,30 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 			if (SequenceWasSuccessful){
 				// no error occurred
 				this->Stats.SequencesSuccessful++;
-				this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].SequenceWasSuccessful = true;
+				this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].SequenceWasSuccessful = true;
 			} else {
 				// an error occurred
-				RehaMove3::printMessage(printMSG_rmpSequenceError, "\n%s Sequence Error: Sequence %ld FAILED! (time=%fs)\n%s",
-					this->DeviceIDClass, this->SequenceQueue.Queue[(uint8_t)SequenceQueuePointer].SequenceNumber, RehaMove3::GetCurrentTime(true), ErrorString );
+				RehaMove3::printMessage(printMSG_rmSequenceError, "\n%s Sequence Error: Sequence %ld FAILED! (time=%fs)\n%s",
+					this->DeviceIDClass, this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].SequenceNumber, RehaMove3::GetCurrentTime(true), ErrorString );
 				this->Stats.SequencesFailed++;
 
 				/*
 				 * Handle Stimulation Errors e.g. electrode errors and check if the stimulation should be continued
 				 */
-				this->rmpStatus.NumberOfStimErrors++;
-				if ((this->rmpStatus.NumberOfStimErrors >= this->rmpSettings.NumberOfErrorsAfterWhichToAbort) && (this->rmpSettings.NumberOfErrorsAfterWhichToAbort != 0)){
-					this->rmpStatus.DoNotStimulate = true;
-					if (this->rmpSettings.NumberOfSequencesAfterWhichToRetestForError != 0){
-						this->rmpStatus.NumberOfSequencesUntilErrorRetest = this->rmpSettings.NumberOfSequencesAfterWhichToRetestForError;
-						this->rmpStatus.DoReTestTheStimError = true;
-						snprintf(ErrorString, sizeof(ErrorString), "The stimulation will be resumed after %0.2f sec!", (float)( (float)this->rmpSettings.NumberOfSequencesAfterWhichToRetestForError/(float)this->rmpSettings.StimFrequency));
+				this->rmStatus.NumberOfStimErrors++;
+				if ((this->rmStatus.NumberOfStimErrors >= this->rmSettings.NumberOfErrorsAfterWhichToAbort) && (this->rmSettings.NumberOfErrorsAfterWhichToAbort != 0)){
+					this->rmStatus.DoNotStimulate = true;
+					if (this->rmSettings.NumberOfSequencesAfterWhichToRetestForError != 0){
+						this->rmStatus.NumberOfSequencesUntilErrorRetest = this->rmSettings.NumberOfSequencesAfterWhichToRetestForError;
+						this->rmStatus.DoReTestTheStimError = true;
+						snprintf(ErrorString, sizeof(ErrorString), "The stimulation will be resumed after %0.2f sec!", (float)( (float)this->rmSettings.NumberOfSequencesAfterWhichToRetestForError/(float)this->rmSettings.StimFrequency));
 					} else {
-						this->rmpStatus.DoReTestTheStimError = false;
-						this->rmpStatus.NumberOfSequencesUntilErrorRetest = 0xFFFF;
+						this->rmStatus.DoReTestTheStimError = false;
+						this->rmStatus.NumberOfSequencesUntilErrorRetest = 0xFFFF;
 						snprintf(ErrorString, sizeof(ErrorString), "The stimulation will never be resumed!");
 					}
-					RehaMove3::printMessage(printMSG_rmpSequenceError, "%s Stimulation Errors: %u Sequence FAILED!\n   -> The stimulation will be DISABLED!\n   -> PLEASE CHECK THE SETUP AND THE SETTINGS!\n\n   -> RE-TEST: %s\n",
-										this->DeviceIDClass, this->rmpStatus.NumberOfStimErrors, ErrorString );
+					RehaMove3::printMessage(printMSG_rmSequenceError, "%s Stimulation Error: %u Stimulation Sequence(s) FAILED!\n   -> The stimulation will be DISABLED!\n   -> PLEASE CHECK THE SETUP AND THE SETTINGS!\n\n   -> RE-TEST: %s\n",
+										this->DeviceIDClass, this->rmStatus.NumberOfStimErrors, ErrorString );
 				}
 
 				if (StimErrorsOccurred) {
@@ -2123,7 +2647,74 @@ void RehaMove3::PutChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Sm
 	}
 
 	// unlock the queue
-	pthread_mutex_unlock(&(this->SequenceQueueLock_mutex));
+	pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
+}
+
+void RehaMove3::PutMlCurrentState(Smpt_ml_get_current_data_ack *State, bool StimActive)
+{
+	/*
+	 * Print the Stimulation errors
+	 */
+	bool IsStimActiv = false;
+	bool IsElectrodeError = false;
+	if (StimActive){
+		if (State->stimulation_data.stimulation_state == Smpt_Ml_Stimulation_Running){
+			IsStimActiv = true;
+		}
+		int8_t Channel = -1;
+		for (uint8_t iCh=0; iCh<REHAMOVE_NUMBER_OF_CHANNELS; iCh++){
+			if (State->stimulation_data.electrode_error[iCh]){
+				Channel = iCh;
+				this->rmSettings.MidLevel.CurrentMlStimConfig.ActiveChannels[iCh] = false;
+				IsElectrodeError = true;
+			}
+		}
+		if (IsElectrodeError){
+			// print the error
+			RehaMove3::printMessage(printMSG_rmSequenceError, "\n%s Stimulation Update Error: Stimulation failed FAILED! (time=%fs)\n   -> Electrode Error => Channel: %d (%s)\n",
+					this->DeviceIDClass, RehaMove3::GetCurrentTime(true), Channel+1, RehaMove3::GetChannelNameString((Smpt_Channel)Channel) );
+			this->Stats.UpdatesFailed_StimError++;
+		} else {
+			// no error -> return
+			return;
+		}
+	} else {
+		if (State->stimulation_data.stimulation_state != Smpt_Ml_Stimulation_Stopped){
+			IsStimActiv = true;
+			// there was an error, the stimulation should not be on!
+			RehaMove3::printMessage(printMSG_error, "\n%s The Stimulation should be OFF!\n", this->DeviceIDClass);
+		} else {
+			// no error -> return
+			return;
+		}
+	}
+
+	/*
+	 * Handle Stimulation Errors e.g. electrode errors and check if the stimulation should be continued
+	 */
+	char ErrorString[200] = {0};
+	this->rmStatus.NumberOfStimErrors++;
+	if ((this->rmStatus.NumberOfStimErrors >= this->rmSettings.NumberOfErrorsAfterWhichToAbort) && (this->rmSettings.NumberOfErrorsAfterWhichToAbort != 0)){
+		this->rmStatus.DoNotStimulate = true;
+		if (this->rmSettings.NumberOfSequencesAfterWhichToRetestForError != 0){
+			this->rmStatus.NumberOfSequencesUntilErrorRetest = this->rmSettings.NumberOfSequencesAfterWhichToRetestForError;
+			this->rmStatus.DoReTestTheStimError = true;
+			snprintf(ErrorString, sizeof(ErrorString), "The stimulation will be resumed after %0.2f sec!", (float)( (float)this->rmSettings.NumberOfSequencesAfterWhichToRetestForError/(float)this->rmSettings.StimFrequency));
+		} else {
+			this->rmStatus.DoReTestTheStimError = false;
+			this->rmStatus.NumberOfSequencesUntilErrorRetest = 0xFFFF;
+			snprintf(ErrorString, sizeof(ErrorString), "The stimulation will never be resumed!");
+		}
+		RehaMove3::printMessage(printMSG_rmSequenceError, "%s Stimulation Error: %u Stimulation Update(s) FAILED!\n   -> The stimulation will be DISABLED!\n   -> PLEASE CHECK THE SETUP AND THE SETTINGS!\n\n   -> RE-TEST: %s\n",
+				this->DeviceIDClass, this->rmStatus.NumberOfStimErrors, ErrorString );
+	}
+
+	// lock the acks struct
+	pthread_mutex_lock(&(this->AcksLock_mutex));
+	this->Acks.G_ml_StimActive = IsStimActiv;
+	this->Acks.G_ml_StimError = true;
+	// unlock the acks struct
+	pthread_mutex_unlock(&(this->AcksLock_mutex));
 }
 
 
@@ -2140,12 +2731,12 @@ bool RehaMove3::NewStatusUpdateReceived(uint32_t MilliSecondsToWait)
 		gettimeofday(&time,NULL);
 		TimeStart = (uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0);
 	}
-	uint64_t OldStatusUpdateTime = this->rmpStatus.LastUpdated;
+	uint64_t OldStatusUpdateTime = this->rmStatus.LastUpdated;
 	do {
 		// check for ACKs and process them
 		RehaMove3::ReadAcksBlocking();
 		// check if the time of the last update changed
-		if (OldStatusUpdateTime != this->rmpStatus.LastUpdated){
+		if (OldStatusUpdateTime != this->rmStatus.LastUpdated){
 			// something changed -> abort the loop
 			return true;
 			break;
@@ -2172,16 +2763,16 @@ double RehaMove3::GetCurrentTime(bool DoUpdate)
 		struct timeval time;
 		gettimeofday(&time,NULL);
 		uint64_t Time_ms = (uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0);
-		this->rmpStatus.CurrentTime_ms = Time_ms - this->rmpStatus.StartTime_ms;
+		this->rmStatus.CurrentTime_ms = Time_ms - this->rmStatus.StartTime_ms;
 	}
-	return ((double)this->rmpStatus.CurrentTime_ms) / 1000.0;
+	return ((double)this->rmStatus.CurrentTime_ms) / 1000.0;
 }
 
 uint8_t RehaMove3::GetPackageNumber() {
-	uint8_t PackageNumber_old = this->rmpStatus.LocalPackageNumber;
-	this->rmpStatus.LocalPackageNumber++;
-	if (this->rmpStatus.LocalPackageNumber > 63) {
-		this->rmpStatus.LocalPackageNumber = 0;
+	uint8_t PackageNumber_old = this->rmStatus.LocalPackageNumber;
+	this->rmStatus.LocalPackageNumber++;
+	if (this->rmStatus.LocalPackageNumber > 63) {
+		this->rmStatus.LocalPackageNumber = 0;
 	}
 	return PackageNumber_old;
 }
@@ -2238,89 +2829,89 @@ void RehaMove3::printMessage(printMessageType_t type, const char *format, ... )
 		vprintf(format, args );
 		break;
 	case printMSG_warning:
-		if (this->rmpInitSettings.DebugConfig.useColors){
+		if (this->rmInitSettings.DebugConfig.useColors){
 			// color codes: http://misc.flogisoft.com/bash/tip_colors_and_formatting
 			printf("\033[1m\033[93m"); // bold and light yellow
 		}
 		vprintf(format, args );
-		if (this->rmpInitSettings.DebugConfig.useColors){
+		if (this->rmInitSettings.DebugConfig.useColors){
 			printf("\033[0m");
 		}
 		break;
 	case printMSG_error:
-		if (this->rmpInitSettings.DebugConfig.useColors){
+		if (this->rmInitSettings.DebugConfig.useColors){
 			printf("\n\033[1m\033[91m"); // bold and light red
 		}
 		vprintf(format, args );
-		if (this->rmpInitSettings.DebugConfig.useColors){
+		if (this->rmInitSettings.DebugConfig.useColors){
 			printf("\033[0m\n");
 		}
 		break;
-	case printMSG_rmpDeviceInfo:
-		if (this->rmpInitSettings.DebugConfig.printDeviceInfos){
+	case printMSG_rmDeviceInfo:
+		if (this->rmInitSettings.DebugConfig.printDeviceInfos){
 			vprintf(format, args );
 		}
 		break;
-	case printMSG_rmpInitInfo:
-		if (this->rmpInitSettings.DebugConfig.printInitInfos){
+	case printMSG_rmInitInfo:
+		if (this->rmInitSettings.DebugConfig.printInitInfos){
 			vprintf(format, args );
 		}
 		break;
-	case printMSG_rmpInitParam:
-		if (this->rmpInitSettings.DebugConfig.printInitSettings){
+	case printMSG_rmInitParam:
+		if (this->rmInitSettings.DebugConfig.printInitSettings){
 			vprintf(format, args );
 		}
 		break;
-	case printMSG_rmpSendCMD:
-		if (this->rmpInitSettings.DebugConfig.printSendCmdInfos){
+	case printMSG_rmSendCMD:
+		if (this->rmInitSettings.DebugConfig.printSendCmdInfos){
 			vprintf(format, args );
 		}
 		break;
-	case printMSG_rmpReceiveACK:
-		if (this->rmpInitSettings.DebugConfig.printReceivedAckInfos){
+	case printMSG_rmReceiveACK:
+		if (this->rmInitSettings.DebugConfig.printReceivedAckInfos){
 			vprintf(format, args );
 		}
 		break;
-	case printMSG_rmpPulseConfig:
-		if (this->rmpInitSettings.DebugConfig.printStimInfos){
+	case printMSG_rmPulseConfig:
+		if (this->rmInitSettings.DebugConfig.printStimInfos){
 			vprintf(format, args );
 		}
 		break;
-	case printMSG_rmpErrorUnclaimedSequence:
-		if (this->rmpInitSettings.DebugConfig.printErrorsSequence){
-			if (this->rmpInitSettings.DebugConfig.useColors){
+	case printMSG_rmErrorUnclaimedSequence:
+		if (this->rmInitSettings.DebugConfig.printErrorsSequence){
+			if (this->rmInitSettings.DebugConfig.useColors){
 				printf("\033[1m\033[93m"); // bold and light yellow
 			}
 			vprintf(format, args );
-			if (this->rmpInitSettings.DebugConfig.useColors){
+			if (this->rmInitSettings.DebugConfig.useColors){
 				printf("\033[0m");
 			}
 		}
 		break;
-	case printMSG_rmpWarningCorrectionChargeInbalace:
-		if (this->rmpInitSettings.DebugConfig.printCorrectionChargeWarnings){
-			if (this->rmpInitSettings.DebugConfig.useColors){
+	case printMSG_rmWarningCorrectionChargeInbalace:
+		if (this->rmInitSettings.DebugConfig.printCorrectionChargeWarnings){
+			if (this->rmInitSettings.DebugConfig.useColors){
 				printf("\033[1m\033[93m"); // bold and light yellow
 			}
 			vprintf(format, args );
-			if (this->rmpInitSettings.DebugConfig.useColors){
+			if (this->rmInitSettings.DebugConfig.useColors){
 				printf("\033[0m");
 			}
 		}
 		break;
-	case printMSG_rmpSequenceError:
-		if (this->rmpInitSettings.DebugConfig.printErrorsSequence){
-			if (this->rmpInitSettings.DebugConfig.useColors){
+	case printMSG_rmSequenceError:
+		if (this->rmInitSettings.DebugConfig.printErrorsSequence){
+			if (this->rmInitSettings.DebugConfig.useColors){
 				printf("\n\033[1m\033[91m"); // bold and light red
 			}
 			vprintf(format, args );
-			if (this->rmpInitSettings.DebugConfig.useColors){
+			if (this->rmInitSettings.DebugConfig.useColors){
 				printf("\033[0m\n");
 			}
 		}
 		break;
-	case printMSG_rmpStats:
-		if (this->rmpInitSettings.DebugConfig.printStats){
+	case printMSG_rmStats:
+		if (this->rmInitSettings.DebugConfig.printStats){
 			vprintf(format, args );
 		}
 		break;
@@ -2351,14 +2942,14 @@ void RehaMove3::printSupportedVersion(char *msgString, const uint8_t SupportedVe
 {
 	uint8_t iString = 0;
 	uint8_t NumberOfSupportedVersions = 0;
-	if (SupportedVersions == RMP_SupportedVersionsMain){
-		NumberOfSupportedVersions = RMP_NumberOfSupportedVersionsMain;
+	if (SupportedVersions == RM3_SupportedVersionsMain){
+		NumberOfSupportedVersions = RM3_NumberOfSupportedVersionsMain;
 	}
-	if (SupportedVersions == RMP_SupportedVersionsStim){
-		NumberOfSupportedVersions = RMP_NumberOfSupportedVersionsStim;
+	if (SupportedVersions == RM3_SupportedVersionsStim){
+		NumberOfSupportedVersions = RM3_NumberOfSupportedVersionsStim;
 	}
-	if (SupportedVersions == RMP_SupportedVersionsSMPT){
-		NumberOfSupportedVersions = RMP_NumberOfSupportedVersionsSMPT;
+	if (SupportedVersions == RM3_SupportedVersionsSMPT){
+		NumberOfSupportedVersions = RM3_NumberOfSupportedVersionsSMPT;
 	}
 
 	for (uint8_t i = 0; i< NumberOfSupportedVersions; i++){
