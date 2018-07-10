@@ -24,7 +24,7 @@
 #include <cmath>
 
 #include <block_RehaMove3_01.hpp>
-#define WITH_HW // Define for Debugging only
+//#define WITH_HW // Define for Debugging only
 
 using namespace nsRehaMove3_SMPT_32X_01;
 
