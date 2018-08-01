@@ -49,7 +49,7 @@ You can test if every works with one of the examples provided with the block.
 In Matlab, go to `SimulinkToolchain/SimulinkLib_linux64/SimulinkBlock_RehaMove3/examples/block_RehaMove3/` and open e.g. the file test_`RehaMove3_block__LowLevel1_simple.slx`
 
 Build the diagram by clicking the "_Build Model_" button.  
-[Example_LowLevel1_Simple.png](https://github.com/worldwidemv/SimulinkBlock_RehaMove3/raw/master/html/block_RehaMove3/Example_LowLevel1_Simple.png "Simple_LowLevel1_Example")
+![Example_LowLevel1_Simple.png](https://github.com/worldwidemv/SimulinkBlock_RehaMove3/raw/master/html/block_RehaMove3/Example_LowLevel1_Simple.png "Simple_LowLevel1_Example")
 
 This should compile without errors!  
 Details are shown in the Diagnostic Viewer, available (once you hit "_Build Model_") at the bottom of the window.
