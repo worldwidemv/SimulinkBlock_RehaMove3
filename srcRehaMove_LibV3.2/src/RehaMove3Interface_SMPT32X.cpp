@@ -36,6 +36,13 @@ void PrintLibError(const char* format) {
 }
 }
 
+// #####
+// Todo: prüfen, ob der Pointer auf das result  beim abbrechen immer 0 ist !
+
+// ####
+
+
+
 /* ### #########################################################################
  * THREADS
  * ### #########################################################################

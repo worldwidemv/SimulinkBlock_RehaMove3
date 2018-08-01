@@ -1,2 +1,8 @@
-/.project
+.project
 .directory
+.installDone
+auto_generated/
+slprj/
+incRehaMove_LibV*
+*_ert_linux
+*.slx.autosave

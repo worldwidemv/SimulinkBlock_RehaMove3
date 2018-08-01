@@ -231,7 +231,7 @@ public:
 		float    Current;
 	};
 	struct LlSequenceConfig_t {
-		uint8_t 		NumberOfPulses;
+		uint8_t 			NumberOfPulses;
 		LlPulseConfig_t 	PulseConfig[REHAMOVE_MAX_SEQUENCE_SIZE];
 	};
 	bool 	SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceConfig);
