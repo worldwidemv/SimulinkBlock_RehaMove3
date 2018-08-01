@@ -15,8 +15,14 @@ warn_state = warning();
 warning('off','MATLAB:mex:GccVersion_link');
 warning('off','MATLAB:MKDIR:DirectoryExists');
 
+%% check if the Soft Realtime Toolbox is available
+if (~exist('xsrt_buildLibScriptInitLCT', 'file')), error(['The Soft-Realtime Simulink Toolbox is not availabe!', char(10), char(10), ...
+        'This Simulink block depends on the "Soft-Realtime Simulink Toolbox", a universal framework for', char(10), 'creating own Simulink blocks (e.g. for own hardware) and soft realtime execution of Simulink diagrams.', char(10), char(10), ...
+        'Please install the Soft-Realtime Simulink Toolbox from https://github.com/worldwidemv/SimulinkToolchain', char(10), 'and make sure the Matlab path is setup correctly, e.g. by running the Matlab script "srt_InstallSRT.m"!']);
+end
+
 %% check if the installation was done
-if (~exist('.installDone', 'file')), error('The installation was not done yet!'); end
+if (~exist('.installDone', 'file')), error(['The installation was not done yet!', char(10), 'Please run the Matlab script "srt_InstallSRT.m", which is part of the Soft Realtime Toolbox and on which these block depends on!']); end
 
 %% initialize the Matlab/SRT variables
 [startDir, libDir, sfuncFolderName, srtAddPath, defs] = xsrt_buildLibScriptInitLCT(mfilename('fullpath'));
