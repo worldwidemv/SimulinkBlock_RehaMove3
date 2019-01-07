@@ -73,6 +73,7 @@ int main(int argc, char *argv[]) {
 
 	RehaMove3::rmInitSettings_t InitSetup = {0};
 
+	InitSetup.StimConfig.rmProtocol = 1;
 	// LowLevel
 	InitSetup.StimConfig.StimFrequency = 20;
 	InitSetup.StimConfig.ErrorAbortAfter = 2;
@@ -85,6 +86,7 @@ int main(int argc, char *argv[]) {
 	InitSetup.LowLevelConfig.UseDenervation = false;
 	// Debug
 	InitSetup.DebugConfig.printErrorsSequence = true;
+	InitSetup.DebugConfig.printErrorsTiming = true;
 	InitSetup.DebugConfig.printDeviceInfos = true;		// done
 //	InitSetup.DebugConfig.printInitInfos = true;		// done
 //	InitSetup.DebugConfig.printInitSettings = true;		// done
@@ -92,13 +94,13 @@ int main(int argc, char *argv[]) {
 	InitSetup.DebugConfig.printCorrectionChargeWarnings = true;
 //	InitSetup.DebugConfig.printReceivedAckInfos = true;
 //	InitSetup.DebugConfig.printSendCmdInfos = true;
-	InitSetup.DebugConfig.printStimInfos = true;
+//	InitSetup.DebugConfig.printStimInfos = true;
 	InitSetup.DebugConfig.disableVersionCheck = true;
 	InitSetup.DebugConfig.useColors = true;
 
 	RehaMove3::LlSequenceConfig_t SC = {};
 	SC.NumberOfPulses = 1;
-	SC.PulseConfig[0].Channel = Smpt_Channel_Red+1;
+	SC.PulseConfig[0].Channel = Smpt_Channel_White+1;
 	SC.PulseConfig[0].Current = 5;
 	SC.PulseConfig[0].PulseWidth = 300;
 	SC.PulseConfig[0].Shape = Shape_Balanced_Symetric_Biphasic;
@@ -161,6 +163,7 @@ int main(int argc, char *argv[]) {
 
 	RehaMove3::rmGetStatus_t Status = Device->GetCurrentStatus(false, false, 0);
 	double Errors;
+	uint64_t LlSequenceID = 0;
 
 	usleep(50000); // 50ms
 	while (PackageNumber < (int) ValuesToGet) {
@@ -169,7 +172,7 @@ int main(int argc, char *argv[]) {
 		T2 = Time.tv_sec * 1000.0 + Time.tv_usec / 1000.0;
 
 		// get the results
-		if (!Device->GetLastLowLevelStimulationResult(&Errors)){
+		if (!Device->GetLastLowLevelStimulationResult(&Errors, LlSequenceID)){
 			if (Errors != 0){
 				printf("\n### Sequence failed -> Channels: %1.0f\n\n", Errors);
 			}
@@ -178,7 +181,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		// Stimulation Command
-		Device->SendNewPreDefinedLowLevelSequence(&SC);
+		Device->SendNewPreDefinedLowLevelSequence(&SC, &LlSequenceID);
 
 		PackageNumber++;
 
@@ -192,7 +195,7 @@ int main(int argc, char *argv[]) {
 			StatusProzentOld = StatusProzent;
 		}
 
-		usleep(50000); // 50ms
+		usleep(15000); // 50ms
 	}
 	printf("\n\n");
 	// END

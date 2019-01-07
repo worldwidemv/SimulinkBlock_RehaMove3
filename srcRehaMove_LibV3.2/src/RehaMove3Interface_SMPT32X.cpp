@@ -468,7 +468,8 @@ bool RehaMove3::InitialiseDevice(void)
 			if (smpt_is_valid_ll_init(&ll_init)) {
 				// init configuration is valid
 				RehaMove3::printMessage(printMSG_rmInitParam, "%s DEBUG: Initialising the LowLevel Protocol\n", this->DeviceIDClass);
-				RehaMove3::printMessage(printMSG_rmInitParam, "     -> Denervation used: %s\n", (this->rmInitSettings.LowLevelConfig.UseDenervation ? "yes":"no"));
+				// Denervation not supported yet
+				//RehaMove3::printMessage(printMSG_rmInitParam, "     -> Denervation used: %s\n", (this->rmInitSettings.LowLevelConfig.UseDenervation ? "yes":"no"));
 
 				// Send the ll_init command to the stimulator
 				if (smpt_send_ll_init(&(this->Device), &ll_init)) {
@@ -611,9 +612,10 @@ void RehaMove3::AbortDeviceInitialisation()
 	memcpy(this->rmInitResultExtern, &this->rmInitResult, sizeof(this->rmInitResult));
 }
 
-bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceConfig)
+bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceConfig, uint64_t *SequenceID)
 {
 	// make sure the device is initialised
+	*SequenceID = 0;
 	if (!this->rmStatus.DeviceInitialised || !this->rmStatus.DeviceLlIsInitialised){
 		return false;
 	}
@@ -653,59 +655,59 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 
 	// Debug output
 	if (this->rmInitSettings.DebugConfig.printStimInfos){
-		printf("\n%s Puls Info: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
+		printf("\n%s PulseInfo: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
 	}
 
 	/*
 	 *  Loop through the pulses of one sequence
 	 */
-	for (uint8_t i_Puls = 0; i_Puls < SequenceConfig->NumberOfPulses; i_Puls++){
+	for (uint8_t i_Pulse = 0; i_Pulse < SequenceConfig->NumberOfPulses; i_Pulse++){
 		// Clear Ll_channel_config and set the data
 		smpt_clear_ll_channel_config(&ll_channel_config);
 
-		if (SequenceConfig->PulseConfig[i_Puls].PulseWidth == 0){
+		if (SequenceConfig->PulseConfig[i_Pulse].PulseWidth == 0){
 			// the pulse width is 0 -> skip this pulse
 			continue;
 		}
 
 		// input checks/corrections -> make sure the stimulation does not exceed the stimlation boundaries
-		if (!RehaMove3::CheckChannel(SequenceConfig->PulseConfig[i_Puls].Channel)) {
+		if (!RehaMove3::CheckChannel(SequenceConfig->PulseConfig[i_Pulse].Channel)) {
 			// error: channel invalid
-			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Puls].Channel, RehaMove3::GetCurrentTime(), i_Puls);
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Pulse].Channel, RehaMove3::GetCurrentTime(), i_Pulse);
 			continue;
 		}
-		iCh = SequenceConfig->PulseConfig[i_Puls].Channel -1;
+		iCh = SequenceConfig->PulseConfig[i_Pulse].Channel -1;
 		WasCorrected = false;
-		tempPW = SequenceConfig->PulseConfig[i_Puls].PulseWidth;
-		SequenceConfig->PulseConfig[i_Puls].PulseWidth = CheckAndCorrectPulsewidth(SequenceConfig->PulseConfig[i_Puls].PulseWidth, &WasCorrected);
+		tempPW = SequenceConfig->PulseConfig[i_Pulse].PulseWidth;
+		SequenceConfig->PulseConfig[i_Pulse].PulseWidth = CheckAndCorrectPulsewidth(SequenceConfig->PulseConfig[i_Pulse].PulseWidth, &WasCorrected);
 		if (WasCorrected){
 			RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The pulse width was adjusted from %u to %u\n",
-					this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, tempPW, SequenceConfig->PulseConfig[i_Puls].PulseWidth);
+					this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse+1, tempPW, SequenceConfig->PulseConfig[i_Pulse].PulseWidth);
 		}
 		WasCorrected = false;
-		tempI = SequenceConfig->PulseConfig[i_Puls].Current;
-		SequenceConfig->PulseConfig[i_Puls].Current = (float)CheckAndCorrectCurrent(SequenceConfig->PulseConfig[i_Puls].Current, &WasCorrected);
+		tempI = SequenceConfig->PulseConfig[i_Pulse].Current;
+		SequenceConfig->PulseConfig[i_Pulse].Current = (float)CheckAndCorrectCurrent(SequenceConfig->PulseConfig[i_Pulse].Current, &WasCorrected);
 		if (WasCorrected){
 			RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The current was adjusted from %+0.2f to %+0.2f\n",
-					this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, tempI, SequenceConfig->PulseConfig[i_Puls].Current);
+					this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse+1, tempI, SequenceConfig->PulseConfig[i_Pulse].Current);
 		}
 
 		// build point list
-		switch (SequenceConfig->PulseConfig[i_Puls].Shape) {
+		switch (SequenceConfig->PulseConfig[i_Pulse].Shape) {
 		case Shape_Balanced_Symetric_Biphasic:
 		case Shape_Balanced_Symetric_Biphasic_NEGATIVE:
 			// 0/1 symmetric biphasic pulse; charge balanced
-			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_Symetric_Biphasic_NEGATIVE){
+			if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_Symetric_Biphasic_NEGATIVE){
 				// handle the negative case
-				SequenceConfig->PulseConfig[i_Puls].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Puls].Current);
+				SequenceConfig->PulseConfig[i_Pulse].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Pulse].Current);
 			}
 			iPoint = 0;
-			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Puls].PulseWidth;    	// positive pulse
-			Current[iPoint++] = SequenceConfig->PulseConfig[i_Puls].Current;
+			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Pulse].PulseWidth;    	// positive pulse
+			Current[iPoint++] = SequenceConfig->PulseConfig[i_Pulse].Current;
 			PulseWidth[iPoint] = 100;                                				// 100us break
 			Current[iPoint++] = 0.0;
-			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Puls].PulseWidth;    	// negative pulse
-			Current[iPoint++] = -1.0 * SequenceConfig->PulseConfig[i_Puls].Current;
+			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Pulse].PulseWidth;    	// negative pulse
+			Current[iPoint++] = -1.0 * SequenceConfig->PulseConfig[i_Pulse].Current;
 			ChargeOverAll[iCh] += 0;
 			NumberOfPoints = iPoint;
 			break;
@@ -713,13 +715,13 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 		case Shape_Balanced_UNsymetric_Biphasic:
 		case Shape_Balanced_UNsymetric_Biphasic_NEGATIVE:
 			// 2/3 unsymmetric biphasic pulse; charge balanced
-			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_Biphasic_NEGATIVE){
+			if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_Biphasic_NEGATIVE){
 				// handle the negative case
-				SequenceConfig->PulseConfig[i_Puls].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Puls].Current);
+				SequenceConfig->PulseConfig[i_Pulse].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Pulse].Current);
 			}
 			iPoint = 0;
-			PulseWidth[iPoint]  = SequenceConfig->PulseConfig[i_Puls].PulseWidth;    	// positive pulse
-			Current[iPoint]     = SequenceConfig->PulseConfig[i_Puls].Current;
+			PulseWidth[iPoint]  = SequenceConfig->PulseConfig[i_Pulse].PulseWidth;    	// positive pulse
+			Current[iPoint]     = SequenceConfig->PulseConfig[i_Pulse].Current;
 			Charge         		= (double)PulseWidth[iPoint] *Current[iPoint];
 			CurrentSign         = (Current[iPoint] < 0) ? -1.0 : 1.0;
 			iPoint++;
@@ -733,13 +735,13 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 		case Shape_UNbalanced_UNsymetric_Monophasic:
 		case Shape_UNbalanced_UNsymetric_Monophasic_NEGATIVE:
 			// 4/5 -> monophasic pulse; charge balanced
-			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_UNbalanced_UNsymetric_Monophasic_NEGATIVE){
+			if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_UNbalanced_UNsymetric_Monophasic_NEGATIVE){
 				// handle the negative case
-				SequenceConfig->PulseConfig[i_Puls].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Puls].Current);
+				SequenceConfig->PulseConfig[i_Pulse].Current = -1.0 *fabsf(SequenceConfig->PulseConfig[i_Pulse].Current);
 			}
 			iPoint = 0;
-			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Puls].PulseWidth;     // first pulse
-			Current[iPoint]    = SequenceConfig->PulseConfig[i_Puls].Current;
+			PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Pulse].PulseWidth;     // first pulse
+			Current[iPoint]    = SequenceConfig->PulseConfig[i_Pulse].Current;
 			ChargeOverAll[iCh] += PulseWidth[iPoint] * Current[iPoint];
 			iPoint++;
 			NumberOfPoints = iPoint;
@@ -750,31 +752,31 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 		case Shape_Balanced_UNsymetric_LONG_Biphasic_FIRST:
 			// 6/8/10 -> first part of a unsymmetric biphasic pulse; polarity depends on the current sign
 			// does the secound pulse exist?
-			if ( SequenceConfig->PulseConfig[i_Puls +1].Shape == Shape_UNbalanced_UNsymetric_Biphasic_SECOUND ||
-				 SequenceConfig->PulseConfig[i_Puls +1].Shape == Shape_Balanced_UNsymetric_Biphasic_SECOUND   ||
-				 SequenceConfig->PulseConfig[i_Puls +1].Shape == Shape_Balanced_UNsymetric_LONG_Biphasic_SECOUND) {
+			if ( SequenceConfig->PulseConfig[i_Pulse +1].Shape == Shape_UNbalanced_UNsymetric_Biphasic_SECOUND ||
+				 SequenceConfig->PulseConfig[i_Pulse +1].Shape == Shape_Balanced_UNsymetric_Biphasic_SECOUND   ||
+				 SequenceConfig->PulseConfig[i_Pulse +1].Shape == Shape_Balanced_UNsymetric_LONG_Biphasic_SECOUND) {
 				iPoint = 0;
-				PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Puls].PulseWidth;   	// first pulse
-				Current[iPoint]    = SequenceConfig->PulseConfig[i_Puls].Current;
+				PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Pulse].PulseWidth;   	// first pulse
+				Current[iPoint]    = SequenceConfig->PulseConfig[i_Pulse].Current;
 				CurrentSign        = (Current[iPoint] < 0) ? -1.0 : 1.0;
 				Charge = PulseWidth[iPoint] *Current[iPoint];
 				iPoint++;
 				PulseWidth[iPoint] = 100;                              					// 100us break
 				Current[iPoint++]  = 0.0;
-				PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Puls +1].PulseWidth; // second pulse
-				Current[iPoint]    = -1.0 *CurrentSign	*fabsf(SequenceConfig->PulseConfig[i_Puls +1].Current);
+				PulseWidth[iPoint] = SequenceConfig->PulseConfig[i_Pulse +1].PulseWidth; // second pulse
+				Current[iPoint]    = -1.0 *CurrentSign	*fabsf(SequenceConfig->PulseConfig[i_Pulse +1].Current);
 				Charge = PulseWidth[iPoint] *Current[iPoint];
 				iPoint++;
 				// charge compensation
-				if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_Biphasic_FIRST) {
+				if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_Biphasic_FIRST) {
 					iPoint += RehaMove3::GetMinimalCurrentPulse(&PulseWidth[iPoint], &Current[iPoint], &Charge, 1);
-				} else if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_LONG_Biphasic_FIRST) {
+				} else if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_LONG_Biphasic_FIRST) {
 					iPoint += RehaMove3::GetMinimalCurrentPulse(&PulseWidth[iPoint], &Current[iPoint], &Charge, 7);
 				}
 				ChargeOverAll[iCh] += Charge;
 				NumberOfPoints = iPoint;
 			} else {
-				RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The second half of an (UN)Balanced, UNsymmetric, biphasic pulse was not defined!\n     -> Puls %u is discarded!\n!\n", this->DeviceIDClass, i_Puls);
+				RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The second half of an (UN)Balanced, UNsymmetric, biphasic pulse was not defined!\n     -> Pulse %u is discarded!\n!\n", this->DeviceIDClass, i_Pulse);
 				NumberOfPoints = 0;
 				continue;
 
@@ -795,10 +797,10 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 		case Shape_UNbalanced_UNsymetric_FallingTriangle:
 			{
 			// 12-15 -> Triangle pulse, balanced/UNbanced; polarity is defined by the current sign
-			// Puls Breite
+			// Pulse Breite
 			uint8_t tempNumberOfPoints = 0;
-			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_RisingTriangle ||
-				SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_FallingTriangle){
+			if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_RisingTriangle ||
+				SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_FallingTriangle){
 				tempNumberOfPoints = REHAMOVE_SHAPES__TRIAGLE_MAX_POINTS_BI;
 			} else {
 				tempNumberOfPoints = REHAMOVE_SHAPES__TRIAGLE_MAX_POINTS_MONO;
@@ -808,7 +810,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 			Charge = 0.0;
 
 			// NumberOfPoints für den Rechtwinkligen Teil wenn wir dir minimale Breite deines Punktes annehmen
-			NumberOfPoints = (uint8_t) floor(SequenceConfig->PulseConfig[i_Puls].PulseWidth / REHAMOVE_SHAPES__PW_MIN);
+			NumberOfPoints = (uint8_t) floor(SequenceConfig->PulseConfig[i_Pulse].PulseWidth / REHAMOVE_SHAPES__PW_MIN);
 			if (NumberOfPoints == 0){
 				// no steps -> this pulse is no executed
 				continue;
@@ -816,22 +818,22 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 			// Falls bei minimaler Breite mehr Punkte als REHAMOVE__TRIAGLE_MAX_POINTS (14?) berechnet wurden, werden nur REHAMOVE__TRIAGLE_MAX_POINTS verwendet und dafür die Pulsbreite vergrößert
 			NumberOfPoints = (NumberOfPoints > tempNumberOfPoints) ? tempNumberOfPoints : NumberOfPoints;
 			// Höhe der Stromstufen
-			CurrentStepSize = RehaMove3::CheckAndCorrectCurrent( fabsf(SequenceConfig->PulseConfig[i_Puls].Current / NumberOfPoints), &WasCorrected);
+			CurrentStepSize = RehaMove3::CheckAndCorrectCurrent( fabsf(SequenceConfig->PulseConfig[i_Pulse].Current / NumberOfPoints), &WasCorrected);
 			if (CurrentStepSize == 0.0){
 				// current step is two small -> this pulse is no executed
 				continue;
 			}
-			NumberOfPoints = (uint8_t)roundf(SequenceConfig->PulseConfig[i_Puls].Current/CurrentStepSize);
+			NumberOfPoints = (uint8_t)roundf(SequenceConfig->PulseConfig[i_Pulse].Current/CurrentStepSize);
 			NumberOfPoints = (NumberOfPoints > tempNumberOfPoints) ? tempNumberOfPoints : NumberOfPoints;
 			// Berechne die Pulsbreite einer Stufe des Dreiecks (Abrunden und dann den ersten Punkt länger machen um genau auf PW_Soll zu kommen)
-			PWStepSize = floor(SequenceConfig->PulseConfig[i_Puls].PulseWidth / NumberOfPoints);
+			PWStepSize = floor(SequenceConfig->PulseConfig[i_Pulse].PulseWidth / NumberOfPoints);
 			if (REHAMOVE_SHAPES__TRIAGLE_USE_FIXED_PW_STEP) {
 				// ggf. feste Breite verwenden
 				PWStepSize = (PWStepSize > REHAMOVE_SHAPES__TRIAGLE_PW_STEP) ? REHAMOVE_SHAPES__TRIAGLE_PW_STEP : PWStepSize;
 			}
 			PWStepSize = (PWStepSize < REHAMOVE_SHAPES__PW_MIN) ? REHAMOVE_SHAPES__PW_MIN : PWStepSize;
 
-			CurrentSign    = (SequenceConfig->PulseConfig[i_Puls].Current < 0) ? -1.0 : 1.0;
+			CurrentSign    = (SequenceConfig->PulseConfig[i_Pulse].Current < 0) ? -1.0 : 1.0;
 			tempPW = 0;
 			// calculate the steps of the triangle
 			// point 0
@@ -847,13 +849,13 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 				Charge += (double)PulseWidth[iPoint] *Current[iPoint];
 			}
 			// last step of the triangle
-			int tempPW2 = PulseWidth[iPoint -1] + SequenceConfig->PulseConfig[i_Puls].PulseWidth -tempPW;
+			int tempPW2 = PulseWidth[iPoint -1] + SequenceConfig->PulseConfig[i_Pulse].PulseWidth -tempPW;
 			PulseWidth[iPoint -1] = (tempPW2 > 0) ? (uint16_t)tempPW2 : 0;
-			Current[iPoint -1] = SequenceConfig->PulseConfig[i_Puls].Current;
+			Current[iPoint -1] = SequenceConfig->PulseConfig[i_Pulse].Current;
 
 			// triangle in first or second flank ?
-			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_FallingTriangle ||
-				SequenceConfig->PulseConfig[i_Puls].Shape == Shape_UNbalanced_UNsymetric_FallingTriangle){
+			if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_FallingTriangle ||
+				SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_UNbalanced_UNsymetric_FallingTriangle){
 				// second flank -> reverse the order
 				uint16_t PWtemp[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {};
 				float 	 Itemp[REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX] = {};
@@ -868,8 +870,8 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 			}
 
 			// charge balance
-			if (SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_RisingTriangle ||
-				SequenceConfig->PulseConfig[i_Puls].Shape == Shape_Balanced_UNsymetric_FallingTriangle){
+			if (SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_RisingTriangle ||
+				SequenceConfig->PulseConfig[i_Pulse].Shape == Shape_Balanced_UNsymetric_FallingTriangle){
 				// 100us break
 				PulseWidth[iPoint] = 100;                             // 100us break
 				Current[iPoint++]  = 0.0;
@@ -896,7 +898,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 		 */
 		default:
 			// error: unknown shape
-			RehaMove3::printMessage(printMSG_error, "%s Error: The requested shape %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Puls].Shape, RehaMove3::GetCurrentTime(), i_Puls);
+			RehaMove3::printMessage(printMSG_error, "%s Error: The requested shape %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, SequenceConfig->PulseConfig[i_Pulse].Shape, RehaMove3::GetCurrentTime(), i_Pulse);
 			continue;
 		}
 
@@ -905,7 +907,7 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 		 */
 		if (NumberOfPoints > 0){
 			ll_channel_config.enable_stimulation = 1; 				// Activate the module
-			ll_channel_config.channel = (Smpt_Channel) (SequenceConfig->PulseConfig[i_Puls].Channel	- 1); // Set the correct channel
+			ll_channel_config.channel = (Smpt_Channel) (SequenceConfig->PulseConfig[i_Pulse].Channel	- 1); // Set the correct channel
 			ll_channel_config.number_of_points = NumberOfPoints; 	// Set the number of points
 			// Set the stimulation pulse
 			for (iPoint = 0; iPoint < NumberOfPoints; iPoint++) {
@@ -924,9 +926,9 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 		 */
 		if (this->rmInitSettings.DebugConfig.printStimInfos){
 			// Stimulation configuration
-			RehaMove3::printMessage(printMSG_rmPulseConfig, "  Puls %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n",i_Puls+1, (uint8_t)ll_channel_config.channel+1, SequenceConfig->PulseConfig[i_Puls].Shape, SequenceConfig->PulseConfig[i_Puls].PulseWidth, SequenceConfig->PulseConfig[i_Puls].Current);
-			if ( SequenceConfig->PulseConfig[i_Puls+1].Shape == Shape_UNbalanced_UNsymetric_Biphasic_SECOUND || SequenceConfig->PulseConfig[i_Puls+1].Shape == Shape_Balanced_UNsymetric_Biphasic_SECOUND ) {
-				RehaMove3::printMessage(printMSG_rmPulseConfig, "  Puls %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n", i_Puls+2, SequenceConfig->PulseConfig[i_Puls+1].Channel, SequenceConfig->PulseConfig[i_Puls+1].Shape, SequenceConfig->PulseConfig[i_Puls+1].PulseWidth, SequenceConfig->PulseConfig[i_Puls+1].Current);
+			RehaMove3::printMessage(printMSG_rmPulseConfig, "  Pulse %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n",i_Pulse+1, (uint8_t)ll_channel_config.channel+1, SequenceConfig->PulseConfig[i_Pulse].Shape, SequenceConfig->PulseConfig[i_Pulse].PulseWidth, SequenceConfig->PulseConfig[i_Pulse].Current);
+			if ( SequenceConfig->PulseConfig[i_Pulse+1].Shape == Shape_UNbalanced_UNsymetric_Biphasic_SECOUND || SequenceConfig->PulseConfig[i_Pulse+1].Shape == Shape_Balanced_UNsymetric_Biphasic_SECOUND ) {
+				RehaMove3::printMessage(printMSG_rmPulseConfig, "  Pulse %u -> Channel=%u; Shape=%u; PW=%u; I=%0.1f\n", i_Pulse+2, SequenceConfig->PulseConfig[i_Pulse+1].Channel, SequenceConfig->PulseConfig[i_Pulse+1].Shape, SequenceConfig->PulseConfig[i_Pulse+1].PulseWidth, SequenceConfig->PulseConfig[i_Pulse+1].Current);
 			}
 			for (iPoint=0; iPoint<ll_channel_config.number_of_points; iPoint++) {
 				RehaMove3::printMessage(printMSG_rmPulseConfig, "     PointConfig% 3d: Duration=% 4iµs; Current=% +7.2fmA; (Mode=%i; IM=%i)\n",
@@ -948,15 +950,15 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 				OneOrMorePulsesSend = true;
 				this->Stats.StimultionPulsesSend++;
 				// add the expected response to the ChannelResponse queue
-				PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
+				*SequenceID = PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
 			} else {
 				// error: failed to send the configuration
-				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
+				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse);
 				this->Stats.StimultionPulsesNotSend++;
 			}
 		} else {
 			// error: channel configuration is INvalid
-			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The channel configuration is NOT valid! The pulse was not send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The channel configuration is NOT valid! The pulse was not send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse);
 			this->Stats.StimultionPulsesNotSend++;
 		}
 	} // for loop
@@ -976,13 +978,14 @@ bool RehaMove3::SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceCo
 	if (OneOrMorePulsesSend){
 		this->Stats.SequencesSend++;
 	}
-	return true;
+	return OneOrMorePulsesSend;
 }
 
 
-bool RehaMove3::SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSequenceConfig)
+bool RehaMove3::SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSequenceConfig, uint64_t *SequenceID)
 {
 	// make sure the device is initialised
+	*SequenceID = 0;
 	if (!this->rmStatus.DeviceInitialised || !this->rmStatus.DeviceLlIsInitialised){
 		return false;
 	}
@@ -1020,65 +1023,65 @@ bool RehaMove3::SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSe
 
 	// Debug output
 	if (this->rmInitSettings.DebugConfig.printStimInfos){
-		printf("\n%s Puls Info: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
+		printf("\n%s Pulse Info: time=%0.3f\n", this->DeviceIDClass, RehaMove3::GetCurrentTime());
 	}
 
 	/*
 	 *  Loop through the pulses of one sequence
 	 */
-	for (uint8_t i_Puls = 0; i_Puls < CustomSequenceConfig->NumberOfPulses; i_Puls++){
+	for (uint8_t i_Pulse = 0; i_Pulse < CustomSequenceConfig->NumberOfPulses; i_Pulse++){
 		// Clear Ll_channel_config and set the data
 		smpt_clear_ll_channel_config(&ll_channel_config);
 
-		if (CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[0] == 0){
+		if (CustomSequenceConfig->PulseConfig[i_Pulse].PulseWidth[0] == 0){
 			// the first pulse width is 0 -> skip this pulse
 			continue;
 		}
 
 		// input checks/corrections -> make sure the stimulation does not exceed the stimlation boundaries
-		if (!RehaMove3::CheckChannel(CustomSequenceConfig->PulseConfig[i_Puls].Channel)) {
+		if (!RehaMove3::CheckChannel(CustomSequenceConfig->PulseConfig[i_Pulse].Channel)) {
 			// error: channel invalid
-			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, CustomSequenceConfig->PulseConfig[i_Puls].Channel, RehaMove3::GetCurrentTime(), i_Puls);
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested channel id %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, CustomSequenceConfig->PulseConfig[i_Pulse].Channel, RehaMove3::GetCurrentTime(), i_Pulse);
 			continue;
 		}
 
-		if (CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints >  REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX){
+		if (CustomSequenceConfig->PulseConfig[i_Pulse].NumberOfPoints >  REHAMOVE_SHAPES__NUMBER_OF_POINTS_MAX){
 			// error: number of point invalid
-			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested number of points of this pulse form %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints, RehaMove3::GetCurrentTime(), i_Puls);
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The requested number of points of this pulse form %u is invalid! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, CustomSequenceConfig->PulseConfig[i_Pulse].NumberOfPoints, RehaMove3::GetCurrentTime(), i_Pulse);
 			continue;
 		}
 
 		/*
 		 * Build the channel configuration
 		 */
-		if (CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints > 0){
+		if (CustomSequenceConfig->PulseConfig[i_Pulse].NumberOfPoints > 0){
 			ll_channel_config.enable_stimulation = 1; 				// Activate the module
-			ll_channel_config.channel = (Smpt_Channel) (CustomSequenceConfig->PulseConfig[i_Puls].Channel -1); // Set the correct channel
+			ll_channel_config.channel = (Smpt_Channel) (CustomSequenceConfig->PulseConfig[i_Pulse].Channel -1); // Set the correct channel
 			ll_channel_config.number_of_points = 0; 	// Set the number of points
 			// Set the stimulation pulse
-			for (iPoint = 0; iPoint < CustomSequenceConfig->PulseConfig[i_Puls].NumberOfPoints; iPoint++) {
+			for (iPoint = 0; iPoint < CustomSequenceConfig->PulseConfig[i_Pulse].NumberOfPoints; iPoint++) {
 				ll_channel_config.points[iPoint].control_mode = Smpt_Ll_Control_Current;
 				ll_channel_config.points[iPoint].interpolation_mode = Smpt_Ll_Interpolation_Jump;
 				WasCorrected = false;
-				tempPW = CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint];
-				CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint] = CheckAndCorrectPulsewidth(CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint], &WasCorrected);
+				tempPW = CustomSequenceConfig->PulseConfig[i_Pulse].PulseWidth[iPoint];
+				CustomSequenceConfig->PulseConfig[i_Pulse].PulseWidth[iPoint] = CheckAndCorrectPulsewidth(CustomSequenceConfig->PulseConfig[i_Pulse].PulseWidth[iPoint], &WasCorrected);
 				if (WasCorrected){
 					RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The pulse width of point %u was adjusted from %u to %u\n",
-							this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, iPoint+1, tempPW, CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth);
+							this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse+1, iPoint+1, tempPW, CustomSequenceConfig->PulseConfig[i_Pulse].PulseWidth);
 				}
-				if (CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint] == 0){
+				if (CustomSequenceConfig->PulseConfig[i_Pulse].PulseWidth[iPoint] == 0){
 					// the point is 0 -> this puls is done
 					break;
 				}
-				ll_channel_config.points[iPoint].time = CustomSequenceConfig->PulseConfig[i_Puls].PulseWidth[iPoint];
+				ll_channel_config.points[iPoint].time = CustomSequenceConfig->PulseConfig[i_Pulse].PulseWidth[iPoint];
 				WasCorrected = false;
-				tempI = CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint];
-				CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint] = (float)CheckAndCorrectCurrent(CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint], &WasCorrected);
+				tempI = CustomSequenceConfig->PulseConfig[i_Pulse].Current[iPoint];
+				CustomSequenceConfig->PulseConfig[i_Pulse].Current[iPoint] = (float)CheckAndCorrectCurrent(CustomSequenceConfig->PulseConfig[i_Pulse].Current[iPoint], &WasCorrected);
 				if (WasCorrected){
 					RehaMove3::printMessage(printMSG_rmWarningCorrectionChargeInbalace, "%s Input Correction (time: %0.3f; pulse %u):\n   -> The current of point %u was adjusted from %+0.2f to %+0.2f\n",
-							this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls+1, iPoint+1, tempI, CustomSequenceConfig->PulseConfig[i_Puls].Current);
+							this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse+1, iPoint+1, tempI, CustomSequenceConfig->PulseConfig[i_Pulse].Current);
 				}
-				ll_channel_config.points[iPoint].current = CustomSequenceConfig->PulseConfig[i_Puls].Current[iPoint];
+				ll_channel_config.points[iPoint].current = CustomSequenceConfig->PulseConfig[i_Pulse].Current[iPoint];
 				// increase the number of points
 				ll_channel_config.number_of_points++;
 			}
@@ -1092,7 +1095,7 @@ bool RehaMove3::SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSe
 		 */
 		if (this->rmInitSettings.DebugConfig.printStimInfos){
 			// Stimulation configuration
-			RehaMove3::printMessage(printMSG_rmPulseConfig, "  Puls %u -> Channel=%u\n",i_Puls+1, (uint8_t)ll_channel_config.channel+1);
+			RehaMove3::printMessage(printMSG_rmPulseConfig, "  Pulse %u -> Channel=%u\n",i_Pulse+1, (uint8_t)ll_channel_config.channel+1);
 			for (iPoint=0; iPoint<ll_channel_config.number_of_points; iPoint++) {
 				RehaMove3::printMessage(printMSG_rmPulseConfig, "     PointConfig% 3d: Duration=% 4iµs; Current=% +7.2fmA; (Mode=%i; IM=%i)\n",
 						iPoint+1, ll_channel_config.points[iPoint].time, ll_channel_config.points[iPoint].current, ll_channel_config.points[iPoint].control_mode, ll_channel_config.points[iPoint].interpolation_mode );
@@ -1113,15 +1116,15 @@ bool RehaMove3::SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSe
 				OneOrMorePulsesSend = true;
 				this->Stats.StimultionPulsesSend++;
 				// add the expected response to the ChannelResponse queue
-				PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
+				*SequenceID = PutLLChannelResponseExpectation(this->Stats.SequencesSend+1, ll_channel_config.channel, ll_channel_config.packet_number);
 			} else {
 				// error: failed to send the configuration
-				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
+				RehaMove3::printMessage(printMSG_error, "%s Error: The channel configuration could not be send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse);
 				this->Stats.StimultionPulsesNotSend++;
 			}
 		} else {
 			// error: channel configuration is INvalid
-			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The channel configuration is NOT valid! The pulse was not send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Puls);
+			RehaMove3::printMessage(printMSG_rmSequenceError, "%s Error: The channel configuration is NOT valid! The pulse was not send! (time: %0.3f; pulse: %u)\n", this->DeviceIDClass, RehaMove3::GetCurrentTime(), i_Pulse);
 			this->Stats.StimultionPulsesNotSend++;
 		}
 	} // for loop
@@ -1407,7 +1410,7 @@ bool RehaMove3::SendMidLevelKeepAliveSignal(void)
 	return smpt_send_ml_get_current_data(&this->Device, &ml_get_current_data);
 }
 
-bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
+bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors, uint64_t SequenceID)
 {
 	bool ReturnValue = false;
 	if (PulseErrors != NULL){
@@ -1418,17 +1421,39 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 	// lock the  sequence queue
 	pthread_mutex_lock(&(this->LlSequenceQueueLock_mutex));
 
-	// get the last sequence and get the status of that sequence
-	// -> is there a sequence?
+	// is there a sequence?
 	if (this->LlSequenceQueue.QueueSize > 0){
 		// yes, there is a sequence
 
+		// search the sequence and get the status of that sequence
+		uint8_t iQueue = 0;
+		uint8_t nElements = 0;
+		for (uint8_t i = 0; i < REHAMOVE_SEQUENCE_QUEUE_SIZE; i++ ){
+			iQueue = i + this->LlSequenceQueue.QueueTail;
+			if (iQueue >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+				iQueue -= REHAMOVE_SEQUENCE_QUEUE_SIZE;
+			}
+
+			if (this->LlSequenceQueue.Queue[iQueue].SequenceNumber == SequenceID){
+				nElements = i +1;
+				break;
+			}
+		}
+		if (this->LlSequenceQueue.Queue[iQueue].SequenceNumber != SequenceID){
+			// the sequence ID was not found
+			RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The sequence ID %lu was not found in the acknowledgement queue!\n", this->DeviceIDClass, SequenceID);
+			if (PulseErrors != NULL){
+				*PulseErrors = 0.0;
+			}
+			return false;
+		}
+
 		// was the sequence successful ?
-		if (!this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceWasSuccessful){
+		if (!this->LlSequenceQueue.Queue[iQueue].SequenceWasSuccessful){
 			// there was an error -> encode the pulses that did fail
 			// encode the pulse errors
-			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks; i++){
-				if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].StimulationPulse[i].Result != Smpt_Result_Successful){
+			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[iQueue].NumberOfAcks; i++){
+				if (this->LlSequenceQueue.Queue[iQueue].StimulationPulse[i].Result != Smpt_Result_Successful){
 					// encode the failed pulses as bits
 					if (PulseErrors != NULL){
 						*PulseErrors = i +1;
@@ -1441,13 +1466,14 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 		}
 
 		// is the sequence complete ?
-		if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks == this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfPulses){
+		if (this->LlSequenceQueue.Queue[iQueue].NumberOfAcks == this->LlSequenceQueue.Queue[iQueue].NumberOfPulses){
 			// yes, this sequence did receive acks for all pulses -> remove the sequence by increasing the QueueTail
-			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceNumber = 0;
-			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].SequenceWasSuccessful = false;
-			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfPulses = 0;
-			this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueTail].NumberOfAcks = 0;
-			this->LlSequenceQueue.QueueSize--;
+			this->LlSequenceQueue.Queue[iQueue].SequenceNumber = 0;
+			this->LlSequenceQueue.Queue[iQueue].SequenceWasSuccessful = false;
+			this->LlSequenceQueue.Queue[iQueue].NumberOfPulses = 0;
+			this->LlSequenceQueue.Queue[iQueue].NumberOfAcks = 0;
+			this->LlSequenceQueue.QueueTail = iQueue;
+			this->LlSequenceQueue.QueueSize -= nElements;
 			// increase the counter?
 			if (this->LlSequenceQueue.QueueTail != this->LlSequenceQueue.QueueHead){
 				// yes, increase the counter
@@ -1459,9 +1485,10 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 		} else {
 			// no, the sequence did NOT receive acks for all pulses -> wait, maybe the function was called before the stimulator could answer
 
-			RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The sequence acknowledgement queue contains a sequence with unacknowledged pulses!\n", this->DeviceIDClass);
+			RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The sequence %lu contains %d unacknowledged pulses! (time=%fs)\n",
+					this->DeviceIDClass, this->LlSequenceQueue.Queue[iQueue].SequenceNumber, (this->LlSequenceQueue.Queue[iQueue].NumberOfPulses -this->LlSequenceQueue.Queue[iQueue].NumberOfAcks), RehaMove3::GetCurrentTime(true));
 			// is there another sequence?
-			if (this->LlSequenceQueue.QueueSize > 1) {
+/*			if (this->LlSequenceQueue.QueueSize > 1) {
 				// did this other sequence receive a ack?
 				uint8_t tempQueueElement = this->LlSequenceQueue.QueueTail +1;
 				if (tempQueueElement >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
@@ -1476,7 +1503,7 @@ bool RehaMove3::GetLastLowLevelStimulationResult(double *PulseErrors)
 			} else {
 				RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "     -> There might be a delay in the response received by the 'GetLastSequenceResult' function.\n");
 			}
-
+*/
 			// optional output
 			if (PulseErrors != NULL){
 				*PulseErrors = -2;
@@ -1651,8 +1678,8 @@ RehaMove3::rmGetStatus_t RehaMove3::GetCurrentStatus(bool DoPrintStatus, bool Do
 		switch (this->rmSettings.CommProtocol){
 		case REHAMOVE_MODE_LOWLEVEL_PREDEDINED:
 		case REHAMOVE_MODE_LOWLEVEL_CUSTOM:
-			printf("     -> LowLevel:\n        -> Initialised: %s\n        -> Current/Last High Voltage: %dV\n        -> Use Denervation: %s\n        -> Abort after %u stimulation errors\n        -> Resume the stimulation after %d sequences\n\n",
-					this->rmStatus.DeviceLlIsInitialised ? "yes":"no", this->rmStatus.Device.HighVoltageVoltage, this->rmInitSettings.LowLevelConfig.UseDenervation ? "yes":"no", this->rmSettings.NumberOfErrorsAfterWhichToAbort, this->rmSettings.NumberOfSequencesAfterWhichToRetestForError);
+			printf("     -> LowLevel:\n        -> Initialised: %s\n        -> Current/Last High Voltage: %dV\n        -> Abort after %u stimulation errors\n        -> Resume the stimulation after %d sequences\n\n",
+					this->rmStatus.DeviceLlIsInitialised ? "yes":"no", this->rmStatus.Device.HighVoltageVoltage, this->rmSettings.NumberOfErrorsAfterWhichToAbort, this->rmSettings.NumberOfSequencesAfterWhichToRetestForError);
 			break;
 		case REHAMOVE_MODE_MIDLEVEL:
 			printf("     -> MidLevel:\n        -> Initialised: %s\n        -> Current/Last High Voltage: %dV\n        -> Stimulation Frequency: %2.2fHz; (Change the frequency dynamically: %s)\n        -> Send KeepAlive Signal via periodic MidLevelUpdate call: %s; (Number of calls between updates: %2.0f)\n        -> Do a SoftStart: %s\n        -> Ramp up the Stimulation intensity: %s (For %1.0f pulses; Redo after %1.0f zero updates; Set via periodic Update call: %s)\n        -> Abort after %u stimulation errors\n        -> Resume the stimulation after %d stimulation updates\n\n",
@@ -2211,6 +2238,7 @@ void RehaMove3::PutResponse(SingleResponse_t *Response)
 	// check if there is request for this response in the queue
 	bool SearchResponse = true;
 	uint16_t QueueEntry = this->ResponseQueue.QueueTail;
+
 	while (SearchResponse){
 		// check if the response was requested
 		if (Response->Ack.command_number == this->ResponseQueue.Queue[QueueEntry].Request){
@@ -2324,6 +2352,7 @@ int RehaMove3::GetResponse(Smpt_Cmd ExpectedCommand, bool AddExpectedResponse, i
 	struct timeval time;
 	uint64_t TimeStart = 0, TimeNow = 0;
 	int TimeToWait = MilliSecondsToWait;
+
 	// search the request inside of the queue -> start at the tail, so old request are processed first
 	while (QueueEntry != this->ResponseQueue.QueueHead ){
 		// check if the response was requested
@@ -2343,6 +2372,7 @@ int RehaMove3::GetResponse(Smpt_Cmd ExpectedCommand, bool AddExpectedResponse, i
 		gettimeofday(&time,NULL);
 		TimeStart = (uint64_t)(time.tv_sec*1000.0) + (uint64_t)(time.tv_usec/1000.0);
 	}
+
 	do {
 		// check for ACKs and process them
 		RehaMove3::ReadAcksBlocking();
@@ -2469,7 +2499,7 @@ int RehaMove3::GetResponse(Smpt_Cmd ExpectedCommand, bool AddExpectedResponse, i
 }
 
 
-void RehaMove3::PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber)
+uint64_t RehaMove3::PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber)
 {
 	/*
 	 * Add the expected stimulation response to the queue
@@ -2479,7 +2509,7 @@ void RehaMove3::PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Ch
 
 	// add a new sequence or add a pulse to the last one?
 	if (this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceNumber != SequenceNumber){
-		// yes, this a new sequence
+		// yes, this is a new sequence
 		// increase the counter?
 		if (this->LlSequenceQueue.QueueSize != 0){
 			this->LlSequenceQueue.QueueHead++;
@@ -2489,7 +2519,7 @@ void RehaMove3::PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Ch
 			if (this->LlSequenceQueue.QueueHead == this->LlSequenceQueue.QueueTail) {
 				// queue end was overrun -> we lose data
 				if (!this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults){
-					RehaMove3::printMessage(printMSG_error, "%s Error: The sequence acknowlegement queue did overflow!\n     -> The oldest sequence will be discarded.\n     -> This might happen, because the sequence acknowlegements are not pulled!\n     -> This is the ONLY message about the error!\n", this->DeviceIDClass);
+					RehaMove3::printMessage(printMSG_error, "%s Error: The sequence acknowledgement queue did overflow!\n     -> The oldest sequence will be discarded.\n     -> This might happen, because the sequence acknowlegements are not pulled!\n     -> This is the ONLY message about the error!\n", this->DeviceIDClass);
 					// show this warning only once
 					this->LlSequenceQueue.DoNotReportUnclaimedSequenceResults = true;
 				}
@@ -2514,6 +2544,7 @@ void RehaMove3::PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Ch
 
 	// unlock the queue
 	pthread_mutex_unlock(&(this->LlSequenceQueueLock_mutex));
+	return this->LlSequenceQueue.Queue[this->LlSequenceQueue.QueueHead].SequenceNumber;
 }
 
 void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError)
@@ -2526,21 +2557,25 @@ void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, 
 
 	// search backwards for the last stimulation pulse with no ack ( and were the package number match )
 	bool DoSearch = true, PulseFound = false;
-	int16_t LlSequenceQueuePointer = this->LlSequenceQueue.QueueHead;
 	uint8_t PulsePointer = 0;
 
-	while(DoSearch){
+	// search the sequence
+	uint8_t iQueue = 0;
+	for (uint8_t i = 0; i < REHAMOVE_SEQUENCE_QUEUE_SIZE; i++ ){
+		iQueue = i + this->LlSequenceQueue.QueueTail;
+		if (iQueue >= REHAMOVE_SEQUENCE_QUEUE_SIZE){
+			iQueue -= REHAMOVE_SEQUENCE_QUEUE_SIZE;
+		}
 		// is this sequence complete?
-		/*
-		if (this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfAcks != this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfPulses) {
+		/* if (this->LlSequenceQueue.Queue[iQueue].NumberOfAcks != this->LlSequenceQueue.Queue[iQueue].NumberOfPulses) {
 			// no -> so this ACK must be for the first pulse without an ack, which is the pulse NumberOfAcks because of the 0 index
-			PulsePointer = this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfAcks;
+			PulsePointer = this->LlSequenceQueue.Queue[iQueue].NumberOfAcks;
 			DoSearch = false;
 			PulseFound = true;
-		}
-		*/
-		for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[LlSequenceQueuePointer].NumberOfPulses; i++){
-			if ( this->LlSequenceQueue.Queue[LlSequenceQueuePointer].StimulationPulse[i].PackageNumber == PackageNumber){
+		} */
+
+		for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[iQueue].NumberOfPulses; i++){
+			if ( this->LlSequenceQueue.Queue[iQueue].StimulationPulse[i].PackageNumber == PackageNumber){
 				// the package number match -> this is the pulse we got a response for
 				PulsePointer = i;
 				DoSearch = false;
@@ -2548,26 +2583,20 @@ void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, 
 				break;
 			}
 		}
-
-		if (DoSearch){
-			// the pulse was not found in the last sequence -> look in the sequence before
-			LlSequenceQueuePointer--;
-			if (LlSequenceQueuePointer < 0){
-				LlSequenceQueuePointer = REHAMOVE_SEQUENCE_QUEUE_SIZE;
-			}
-			if (LlSequenceQueuePointer < this->LlSequenceQueue.QueueTail) {
-				// queue end is reached and no pulse was found -> this should not happen ...
-				RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The received acknowledgement for a stimulation pulse could not be found in the sequence queue!\n     -> Package Number: %d\n     -> Result: %s\n     -> Channel Error: %d\n",
-					this->DeviceIDClass, PackageNumber, RehaMove3::GetResultString(Result), ChannelError);
-				DoSearch = false;
-			}
+		if (!DoSearch){
+			break;
 		}
+	}
+	if (DoSearch){
+		// queue end is reached and no pulse was found -> this should not happen ...
+		RehaMove3::printMessage(printMSG_rmErrorUnclaimedSequence, "%s Error: The received acknowledgement for a stimulation pulse could not be found in the sequence queue!\n     -> Package Number: %d\n     -> Result: %s\n     -> Channel Error: %d\n",
+				this->DeviceIDClass, PackageNumber, RehaMove3::GetResultString(Result), ChannelError);
 	}
 
 	// update the found pulse
 	if (PulseFound){
-		this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks++;
-		this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[PulsePointer].Result = (uint8_t)Result;
+		this->LlSequenceQueue.Queue[iQueue].NumberOfAcks++;
+		this->LlSequenceQueue.Queue[iQueue].StimulationPulse[PulsePointer].Result = (uint8_t)Result;
 		// check the result
 		switch (Result){
 		case Smpt_Result_Successful:
@@ -2584,15 +2613,15 @@ void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, 
 		}
 
 		// was this the last pulse of this sequence?
-		if (this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks == this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfPulses){
+		if (this->LlSequenceQueue.Queue[iQueue].NumberOfAcks == this->LlSequenceQueue.Queue[iQueue].NumberOfPulses){
 			bool SequenceWasSuccessful = true, StimErrorsOccurred = false;
 			char ErrorString[1000], tempString[150];
 			memset(ErrorString, 0, sizeof(ErrorString));
 
 			// make sure every pulse within the sequence was successful
-			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].NumberOfAcks; i++) {
+			for (uint8_t i = 0; i < this->LlSequenceQueue.Queue[iQueue].NumberOfAcks; i++) {
 
-				switch (this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Result){
+				switch (this->LlSequenceQueue.Queue[iQueue].StimulationPulse[i].Result){
 				case Smpt_Result_Successful:
 					// stimulation pulse was successful -> end now
 					//this->Stats.StimultionPulsesSuccessful++;
@@ -2604,7 +2633,7 @@ void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, 
 					//this->Stats.StimultionPulsesFailed++;
 					//this->Stats.StimultionPulsesFailed_StimError++;
 					snprintf(tempString, sizeof(tempString), "   -> Electrode Error => Pulse Number: %d; Channel: %d (%s)\n",
-							(i+1), ((int8_t)this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Channel+1), RehaMove3::GetChannelNameString((Smpt_Channel)this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].StimulationPulse[i].Channel));
+							(i+1), ((int8_t)this->LlSequenceQueue.Queue[iQueue].StimulationPulse[i].Channel+1), RehaMove3::GetChannelNameString((Smpt_Channel)this->LlSequenceQueue.Queue[iQueue].StimulationPulse[i].Channel));
 					strcat(ErrorString, tempString);
 					break;
 
@@ -2620,11 +2649,11 @@ void RehaMove3::PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, 
 			if (SequenceWasSuccessful){
 				// no error occurred
 				this->Stats.SequencesSuccessful++;
-				this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].SequenceWasSuccessful = true;
+				this->LlSequenceQueue.Queue[iQueue].SequenceWasSuccessful = true;
 			} else {
 				// an error occurred
 				RehaMove3::printMessage(printMSG_rmSequenceError, "\n%s Sequence Error: Sequence %ld FAILED! (time=%fs)\n%s",
-					this->DeviceIDClass, this->LlSequenceQueue.Queue[(uint8_t)LlSequenceQueuePointer].SequenceNumber, RehaMove3::GetCurrentTime(true), ErrorString );
+					this->DeviceIDClass, this->LlSequenceQueue.Queue[iQueue].SequenceNumber, RehaMove3::GetCurrentTime(true), ErrorString );
 				this->Stats.SequencesFailed++;
 
 				/*
@@ -2885,7 +2914,7 @@ void RehaMove3::printMessage(printMessageType_t type, const char *format, ... )
 		}
 		break;
 	case printMSG_rmErrorUnclaimedSequence:
-		if (this->rmInitSettings.DebugConfig.printErrorsSequence){
+		if (this->rmInitSettings.DebugConfig.printErrorsTiming){
 			if (this->rmInitSettings.DebugConfig.useColors){
 				printf("\033[1m\033[93m"); // bold and light yellow
 			}

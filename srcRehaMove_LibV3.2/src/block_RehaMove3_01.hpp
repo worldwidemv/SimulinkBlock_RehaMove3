@@ -49,15 +49,16 @@ void lctRM3_Deinitialise(void **work1);
 class block_RehaMove3 {
 public:
 	enum BlockReturnCode_t {
-		blockReturn_initialisationSuccessful = 1,
-		blockError_stimulationFailed=  0,
-		blockError_notInitialised	= -1,
-		blockError_openingDevice	= -2,
-		blockError_getDeviceInfo	= -3,
-		blockError_checkDeviceIDs   = -4,
-		blockError_initFailed       = -5,
-		blockError_initLL           = -6,
-		blockError_initML			= -7,
+		blockReturn_initialisationSuccessful_noErrors = 1,
+		blockError_noStimulationPulseSend = 0,
+		blockError_stimulationFailed= -1,
+		blockError_notInitialised	= -2,
+		blockError_openingDevice	= -3,
+		blockError_getDeviceInfo	= -4,
+		blockError_checkDeviceIDs   = -5,
+		blockError_initFailed       = -6,
+		blockError_initLL           = -7,
+		blockError_initML			= -8,
 		blockError_initAborted		= -10,
 		blockError_customPF_ChannelMismatch	= -20,
 		blockError_unknownProtocol	= -21
@@ -128,6 +129,7 @@ public:
 		uint16_t sizeStimIn2_2;
 	} ioSize;
 	double sampleTime;
+	uint64_t LlSequenceID;
 
 	RehaMove3::actionResult_t 			rmResult;
 	RehaMove3::rmInitSettings_t 		rmInitSettings;

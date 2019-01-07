@@ -132,7 +132,7 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 		switch(bRehaMove3->stimOptions.rmProtocol){
 		case RM3_LOW_LEVEL_STIMULATION_PROTOCOL1:
 		case RM3_LOW_LEVEL_STIMULATION_PROTOCOL2:
-			LastStimulationSuccessful = bRehaMove3->Device->GetLastLowLevelStimulationResult(&PulseErrors);
+			LastStimulationSuccessful = bRehaMove3->Device->GetLastLowLevelStimulationResult(&PulseErrors, bRehaMove3->LlSequenceID);
 			break;
 		case RM3_MID_LEVEL_STIMULATION_PROTOCOL:
 			LastStimulationSuccessful = bRehaMove3->Device->GetLastMidLevelStimulationResult(&PulseErrors);
@@ -173,7 +173,7 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 			bRehaMove3->LlSequenceConfig.NumberOfPulses = j;
 
 			// send the new sequence
-			bRehaMove3->Device->SendNewPreDefinedLowLevelSequence(&bRehaMove3->LlSequenceConfig);
+			bRehaMove3->Device->SendNewPreDefinedLowLevelSequence(&bRehaMove3->LlSequenceConfig, &bRehaMove3->LlSequenceID);
 			break;}
 
 		case RM3_LOW_LEVEL_STIMULATION_PROTOCOL2:{
@@ -206,7 +206,7 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 			bRehaMove3->LlCustomSequenceConfig.NumberOfPulses = j;
 
 			// send the new sequence
-			bRehaMove3->Device->SendNewCustomLowLevelSequence(&bRehaMove3->LlCustomSequenceConfig);
+			bRehaMove3->Device->SendNewCustomLowLevelSequence(&bRehaMove3->LlCustomSequenceConfig, &bRehaMove3->LlSequenceID);
 			break;}
 
 		case RM3_MID_LEVEL_STIMULATION_PROTOCOL:{
@@ -258,7 +258,7 @@ void lctRM3_InputOutput( void **work1, double u1[], double u2[], double y1[])
 		if (bRehaMove3->Device->IsDeviceInitialised(&bRehaMove3->rmResult)) {
 			// the initialisation was successful
 			bRehaMove3->rmStatus.deviceIsInitialised = true;
-			bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockReturn_initialisationSuccessful;
+			bRehaMove3->rmStatus.stimStatus1 = (double)block_RehaMove3::blockReturn_initialisationSuccessful_noErrors;
 		} else {
 			// the initialisation failed
 			if (bRehaMove3->rmResult.finished && (bRehaMove3->rmStatus.outputCounter  >= bRehaMove3->rmStatus.outputCounterNext)){
@@ -311,6 +311,7 @@ block_RehaMove3::block_RehaMove3(void)
 	memset(&this->miscOptions, 0, sizeof(miscOptions_t));
 	memset(&this->ioSize, 0, sizeof(io_size_t));
 	this->sampleTime = 0.0;
+	this->LlSequenceID = 0;
 
 	memset(&this->rmResult, 0, sizeof(this->rmResult));
 	memset(&this->rmInitSettings, 0, sizeof(this->rmInitSettings));
@@ -421,8 +422,8 @@ void block_RehaMove3::TransverLlOptions(uint16_t *parameter, uint16_t parameterS
 		for (uint8_t i=0; i<this->stimOptions.numberOfActiveChannels; i++){
 			printf("%u ", this->llOptions.channelsPulseForm[i]);
 		}
-		printf("]\n  Pulse Form given as Input: %u\n  Number of Pulse Parts: %u\n  Max. Stimulation Voltage: %u V\n  Stimulate Denerved Muscles: %u\n",
-				this->llOptions.pulseFormGivenAsInput, this->llOptions.numberOfPulseParts, maxStimVoltage, this->llOptions.useDenervation);
+		printf("]\n  Pulse Form given as Input: %u\n  Number of Pulse Parts: %u\n  Max. Stimulation Voltage: %u V\n",
+				this->llOptions.pulseFormGivenAsInput, this->llOptions.numberOfPulseParts, maxStimVoltage);
 	}
 }
 void block_RehaMove3::TransverMlOptions(double *parameter, uint16_t parameterSize)
@@ -463,6 +464,7 @@ void block_RehaMove3::TransverMiscOptions(uint16_t *parameter, uint16_t paramete
 	this->miscOptions.debug.printReceivedAckInfos = (bool)parameter[i++];
 	this->miscOptions.debug.printStimInfos = (bool)parameter[i++];
 	this->miscOptions.debug.printErrorsSequence = (bool)parameter[i++];
+	this->miscOptions.debug.printErrorsTiming = (bool)parameter[i++];
 	this->miscOptions.debug.printCorrectionChargeWarnings = (bool)parameter[i++];
 	this->miscOptions.debug.printStats = (bool)parameter[i++];
 	this->miscOptions.debug.useColors = (bool)parameter[i++];
@@ -475,8 +477,8 @@ void block_RehaMove3::TransverMiscOptions(uint16_t *parameter, uint16_t paramete
 
 	if (printDebugInfo){
 		if (this->miscOptions.debugPrintBlockParameter){
-			printf("%s Block Debug: Misc Parameter (%u values)\n  Print Block Parameter: %u\n  Print Device Infos: %u\n  Print Init Infos: %u\n  Print Init Settings: %u\n  Print Send CMD Infos: %u\n  Print Received ACK Infos: %u\n  Print Pulse Config; %u\n  Print Sequence Errors: %u\n  Print Input Corrections / Unbalanced Charge: %u\n  Print Stats: %u\n  Use Colors for Errors/Warnings: %u\n",
-					this->stimOptions.blockID, parameterSize, this->miscOptions.debugPrintBlockParameter, this->miscOptions.debug.printDeviceInfos, this->miscOptions.debug.printInitInfos, this->miscOptions.debug.printInitSettings, this->miscOptions.debug.printSendCmdInfos, this->miscOptions.debug.printReceivedAckInfos, this->miscOptions.debug.printStimInfos, this->miscOptions.debug.printErrorsSequence, this->miscOptions.debug.printCorrectionChargeWarnings, this->miscOptions.debug.printStats, this->miscOptions.debug.useColors);
+			printf("%s Block Debug: Misc Parameter (%u values)\n  Print Block Parameter: %u\n  Print Device Infos: %u\n  Print Init Infos: %u\n  Print Init Settings: %u\n  Print Send CMD Infos: %u\n  Print Received ACK Infos: %u\n  Print Pulse Config; %u\n  Print Sequence Errors: %u\n  Print Timing Errors: %u\n  Print Input Corrections / Unbalanced Charge: %u\n  Print Stats: %u\n  Use Colors for Errors/Warnings: %u\n",
+					this->stimOptions.blockID, parameterSize, this->miscOptions.debugPrintBlockParameter, this->miscOptions.debug.printDeviceInfos, this->miscOptions.debug.printInitInfos, this->miscOptions.debug.printInitSettings, this->miscOptions.debug.printSendCmdInfos, this->miscOptions.debug.printReceivedAckInfos, this->miscOptions.debug.printStimInfos, this->miscOptions.debug.printErrorsSequence, this->miscOptions.debug.printErrorsTiming, this->miscOptions.debug.printCorrectionChargeWarnings, this->miscOptions.debug.printStats, this->miscOptions.debug.useColors);
 			printf("  Enable Advanced Settings: %u\n  Disable Version Check: %u\n",
 					this->miscOptions.enableAdvancedSettings, this->miscOptions.disableVersionCheck);
 		}

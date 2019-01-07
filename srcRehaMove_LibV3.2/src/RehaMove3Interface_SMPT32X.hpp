@@ -79,8 +79,8 @@ static const uint8_t RM3_ErrorWarningBand				= 3; // warning if difference of mi
 #define REHAMOVE_MAX_SEQUENCE_SIZE							12
 #define REHAMOVE_RESPONSE_QUEUE_SIZE						100
 #define REHAMOVE_RESPONSE_ERROR_DESC_SIZE					100
-#define REHAMOVE_SEQUENCE_QUEUE_SIZE						5
-#define REHAMOVE_ACK_THREAD_DELAY_US						1000
+#define REHAMOVE_SEQUENCE_QUEUE_SIZE						10
+#define REHAMOVE_ACK_THREAD_DELAY_US						500
 
 #define REHAMOVE_MODE_LOWLEVEL_PREDEDINED					1
 #define REHAMOVE_MODE_LOWLEVEL_CUSTOM						2
@@ -183,6 +183,7 @@ public:
 		bool printReceivedAckInfos;
 		bool printCorrectionChargeWarnings;
 		bool printErrorsSequence;
+		bool printErrorsTiming;
 		bool printStats;
 		bool useColors;
 		bool disableVersionCheck;
@@ -234,7 +235,7 @@ public:
 		uint8_t 			NumberOfPulses;
 		LlPulseConfig_t 	PulseConfig[REHAMOVE_MAX_SEQUENCE_SIZE];
 	};
-	bool 	SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceConfig);
+	bool 	SendNewPreDefinedLowLevelSequence(LlSequenceConfig_t *SequenceConfig, uint64_t *SequenceID);
 
 	struct CustomLlPulseConfig_t {
 		uint8_t  Channel;
@@ -246,7 +247,7 @@ public:
 		uint8_t  NumberOfPulses;
 		CustomLlPulseConfig_t PulseConfig[REHAMOVE_MAX_SEQUENCE_SIZE];
 	};
-	bool 	SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSequenceConfig);
+	bool 	SendNewCustomLowLevelSequence(CustomLlSequenceConfig_t *CustomSequenceConfig, uint64_t *SequenceID);
 
 	struct MlPulseConfig_t {
 		uint8_t  Channel;
@@ -264,7 +265,7 @@ public:
 	bool 	SendMidLevelUpdate(MlUpdateConfig_t *SequenceConfig);
 	bool    SendMidLevelKeepAliveSignal(void);
 
-    bool 	GetLastLowLevelStimulationResult(double *PulseErrors);
+    bool 	GetLastLowLevelStimulationResult(double *PulseErrors, uint64_t SequenceID);
     bool 	GetLastMidLevelStimulationResult(double *PulseErrors);
 
 	bool 	DeInitialiseDevice(bool doPrintInfos, bool doPrintStats);
@@ -440,7 +441,7 @@ private:
 	void 	 PutResponse(SingleResponse_t *Response);
 	int 	 GetResponse(Smpt_Cmd ExpectedCommand, bool DoIncreaseAckCounter, int MilliSecondsToWait);
 
-	void 	 PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber);
+	uint64_t PutLLChannelResponseExpectation(uint64_t SequenceNumber, Smpt_Channel Channel, uint8_t PackageNumber);
 	void 	 PutLLChannelResponse(uint8_t PackageNumber, Smpt_Result Result, Smpt_Channel ChannelError);
 	void	 PutMlCurrentState(Smpt_ml_get_current_data_ack *State, bool MlStimActive);
 
