@@ -30,7 +30,7 @@ switch get_param(gcb, 'stimRehaMoveProProtocol')
 end
 
 
-tabMisc1 = {'on','on','on','on','on','on','on','on','on','on','on'};
+tabMisc1 = {'on','on','on','on','on','on','on','on','on','on','on', 'on'};
 if (strcmp(get_param(gcb, 'miscEnableAdvancedSettings'), 'on'))
     tabMisc2 = {'on','on'};
 else
